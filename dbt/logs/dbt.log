@@ -1,0 +1,37 @@
+==================== 2026-10-19T04:59:05.217069Z | 01a15287-0e77-7ff1-8afa-1a543286e4d8 ====================
+04:59:05.218883 [info ]: Installing dbt project and profile setup
+04:59:05.226396 [info ]: Info Created .vscode/extensions.json with dbt extension recommendation
+04:59:05.227665 [info ]: Success Project created successfully!
+04:59:05.227830 [info ]: Info Project name: fpl_optimizer
+04:59:05.227851 [info ]: Info Project directory: fpl_optimizer
+04:59:05.227877 [info ]: Info Setting up your profile...
+04:59:05.228761 [info ]: Info Creating new profile...
+04:59:10.969204 [info ]: No dbt_cloud.yml found - proceeding without cloud pre-population
+04:59:37.992586 [info ]: Success Profile written to /Users/nehal/.dbt/profiles.yml
+04:59:37.993466 [info ]: Validating profile inputs, adapters, and connection
+
+04:59:37.993792 [info ]: dbt-core 2.0.0-alpha.5
+04:59:37.996594 [info ]: Started loading project
+04:59:38.017168 [info ]: Loading ~/.dbt/profiles.yml
+04:59:38.024816 [info ]: Finished loading project [  0.03s]
+04:59:38.025794 [info ]: Started debugging
+04:59:38.026186 [info ]: Debugging profile: dev
+04:59:38.026211 [info ]: Debugging dbt version: 2.0.0-alpha.5
+04:59:38.026220 [info ]: Debugging platform: macos aarch64 (unix)
+04:59:38.026380 [info ]: Debugging adapter type: bigquery (remote)
+04:59:38.042001 [info ]: Debugging dependencies:
+  git: OK
+04:59:38.043709 [info ]: Debugging connection:
+  "database": "fpl-optimizer-511321",
+  "schema": "fpl_raw",
+  "method": "oauth",
+  "location": "US",
+  "dataproc_batch": null
+04:59:40.225827 [debug]: Query executed on node unknown:
+select 1 as id
+04:59:40.227424 [info ]: Debugging connection test: OK
+04:59:40.227707 [info ]: Debugged All checks passed!
+04:59:40.227945 [info ]: Finished debugging [  2.20s]
+04:59:40.314891 [info ]: 
+==================== Execution Summary =====================
+Finished 'init' successfully for target 'dev' [35.1s]

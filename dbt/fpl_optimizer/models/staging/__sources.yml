@@ -1,0 +1,31 @@
+version: 2
+
+# Try using these source definitions instead!
+sources:
+  - name: fpl_raw
+    database: fpl-optimizer-511321
+    schema: fpl_raw
+    description: raw output of the fpl bootstrap and fixtures endpoints
+    tables:
+      - name: players
+        description: the elements array from the fpl bootstrap api endpoint
+        config:
+          loaded_at_field: ingested_at 
+      - name: teams
+        description: the teams array from the fpl bootstrap api endpoint
+        config:
+          loaded_at_field: ingested_at
+      - name: gameweeks
+        description: the events array from the fpl bootstrap api endpoint
+        config:
+          loaded_at_field: ingested_at
+      - name: positions
+        description: the element_types array from the fpl bootstrap api endpoint
+        config:
+          loaded_at_field: ingested_at
+      - name: fixtures
+        description: Output from the fixtures api endpoint
+        config:
+          loaded_at_field: ingested_at 
+
+        
