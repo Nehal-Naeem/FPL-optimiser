@@ -1,37 +1,51 @@
 WITH fixtures AS (
-
     SELECT *
     FROM {{ ref('stg_fixtures') }}
-
 ),
 
-team_fixtures AS (
+teams AS (
+    SELECT *
+    FROM {{ ref('stg_teams') }}
+),
 
-    SELECT
-        id AS fixture_id,
-        event AS gameweek_id,
-        kickoff_time,
-        finished,
-        team_h AS team_id,
-        team_a AS opponent_id,
-        "H" AS home_away,
-        team_h_difficulty AS difficulty 
-    FROM fixtures
+home_rows AS (
+    SELECT 
+        f.id,
+        f.event,
+        f.finished,
+        f.kickoff_time,
+        f.team_h AS team_id,
+        f.team_a AS opponent_id,
+        th.name AS club,
+        ta.name AS opponent,
+        'H' AS home_away,
+        f.team_h_difficulty AS difficulty
+    FROM fixtures f
+    LEFT JOIN teams th
+        ON f.team_h = th.id
+    LEFT JOIN teams ta
+        ON f.team_a = ta.id
+),
 
-    UNION ALL
-
-    SELECT
-        id AS fixture_id,
-        event AS gameweek_id,
-        kickoff_time,
-        finished,
-        team_a AS team_id,
-        team_h AS opponent_id,
+away_rows AS (
+    SELECT 
+        f.id,
+        f.event,
+        f.finished,
+        f.kickoff_time,
+        f.team_a AS team_id,
+        f.team_h AS opponent_id,
+        ta.name AS club,
+        th.name AS opponent,
         'A' AS home_away,
-        team_a_difficulty AS difficulty
-    FROM fixtures
-    
+        f.team_a_difficulty AS difficulty
+    FROM fixtures f
+    LEFT JOIN teams th
+        ON f.team_h = th.id
+    LEFT JOIN teams ta
+        ON f.team_a = ta.id
 )
 
-SELECT *
-FROM team_fixtures
+SELECT * FROM home_rows
+UNION ALL
+SELECT * FROM away_rows
