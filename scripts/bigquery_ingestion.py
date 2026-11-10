@@ -1,9 +1,10 @@
 from google.cloud import bigquery
 import requests
 from datetime import datetime, timezone
+import os
 
-PROJECT_ID = 'fpl-optimizer-511321'
-DATASET_ID = 'fpl_raw'
+PROJECT_ID = os.environ.get('GOOGLE_CLOUD_PROJECT', 'fpl-optimizer-511321')
+DATASET_ID = os.environ.get('BIGQUERY_DATASET', 'fpl_raw')
 
 client = bigquery.Client(project=PROJECT_ID)
 # table_id = "fpl-optimizer-511321.fpl_raw.players"
@@ -11,8 +12,14 @@ client = bigquery.Client(project=PROJECT_ID)
 fixtures_url = "https://fantasy.premierleague.com/api/fixtures"
 bootstrap_url = "https://fantasy.premierleague.com/api/bootstrap-static/"
 
-bootstrap = requests.get(bootstrap_url).json()
-fixtures = requests.get(fixtures_url).json()
+def fetch_json(url):
+    response = requests.get(url, timeout=(10, 60))
+    response.raise_for_status()
+    return response.json()
+
+
+bootstrap = fetch_json(bootstrap_url)
+fixtures = fetch_json(fixtures_url)
 
 ingested_at = datetime.now(timezone.utc).isoformat()
 
@@ -77,49 +84,15 @@ fixtures_job = client.load_table_from_json(
 
 jobs.append(("fixtures", fixtures_job))
 
+failed_tables = []
 for table_name, job in jobs:
     try:
         job.result()
-        print(f"Successfully loaded {table_name}")
+        print(f"Successfully loaded {table_name}", flush=True)
     except Exception as e:
         print(f"Failed to load {table_name}")
-        print(e)
+        print(e, flush=True)
+        failed_tables.append(table_name)
 
-
-
-
-
-
-
-
-
-# players = bootstrap["elements"]
-# gameweeks = bootstrap["events"]
-# positions = bootstrap["element_types"]
-# teams = bootstrap["teams"]
-
-# for player in players:
-#     player["ingetsed_at"] = datetime.now(timezone.utc)
-# for gameweek in gameweeks:
-#     gameweek["ingetsed_at"] = datetime.now(timezone.utc)
-# for position in positions:
-#     position["ingetsed_at"] = datetime.now(timezone.utc)
-# for team in teams:
-#     team["ingetsed_at"] = datetime.now(timezone.utc)
-
-# players_df = con.execute("""
-#     SELECT * FROM players
-# """).fetchdf()
- 
-# players_df["ingested_at"] = datetime.now(timezone.utc)
-
-# job = client.load_table_from_dataframe(
-#     players_df,
-#     table_id,
-#     job_config=job_config
-# )
-
-# job.result()
-
-# print(f"players_df shape: {players_df.shape}")
-# print(f"first 10 players: {players_df["id", "web_name", "team", "now_cost", "form"].head()}")
+if failed_tables:
+    raise RuntimeError(f"BigQuery loads failed: {', '.join(failed_tables)}")

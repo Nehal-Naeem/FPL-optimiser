@@ -3,6 +3,20 @@
 A small local Streamlit app for viewing a public FPL squad against the existing
 DuckDB player evaluations and finding affordable replacements.
 
+## Architecture and technologies
+
+- Python, Streamlit, pandas, and DuckDB power the local app and evaluation pipeline.
+- The public Fantasy Premier League API supplies squad, player, team, gameweek,
+  position, and fixture data. HTTP requests use `requests`.
+- A Python 3.12 Docker container runs raw ingestion as a Google Cloud Run job.
+  Cloud Build builds the image, Artifact Registry stores it, and the
+  `google-cloud-bigquery` client loads data into BigQuery.
+- dbt and `dbt_utils` define BigQuery staging views, intermediate views, and a
+  player evaluation mart.
+
+The local DuckDB pipeline and BigQuery pipeline are separate. The Streamlit app
+reads `data/fpl.duckdb`; refreshing BigQuery or running dbt does not update that file.
+
 ## Run
 
 From the project directory (Python 3.9+):
@@ -84,6 +98,28 @@ existing relative database paths resolve correctly:
 `main.py` refreshes and rebuilds database tables. Its import of `fixtures.py`
 also fetches fixtures and opens a database connection. Use the Streamlit command
 in **Run** to view the saved snapshot without refreshing it.
+
+## BigQuery ingestion job
+
+Cloud Run job `fpl-bigquery-ingestion` runs `scripts/bigquery_ingestion.py` in
+project `fpl-optimizer-511321`, region `us-central1`. It replaces the `players`,
+`gameweeks`, `positions`, `teams`, and `fixtures` tables in `fpl_raw`.
+
+The runtime service account is
+`fpl-ingestion@fpl-optimizer-511321.iam.gserviceaccount.com`, with
+`roles/bigquery.jobUser` and `roles/bigquery.dataEditor` granted at project level.
+Ingestion is run manually. Run the deployed job with:
+
+```sh
+gcloud run jobs execute fpl-bigquery-ingestion \
+  --project=fpl-optimizer-511321 --region=us-central1 --wait
+```
+
+Run dbt separately after ingestion to refresh the BigQuery transformation models.
+
+To deploy `scripts/bigquery_ingestion.py` as a Google Cloud Run job, follow the
+[setup and deployment instructions](deploy/bigquery-ingestion/README.md).
+For the BigQuery transformation models, see the [dbt README](dbt/fpl_optimizer/README.md).
 
 ## Checks
 
