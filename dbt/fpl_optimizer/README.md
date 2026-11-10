@@ -14,8 +14,8 @@ setup and execution commands.
 
 The Cloud Run job runs only `scripts/bigquery_ingestion.py`. It does not execute
 dbt. Run transformations separately after ingestion.
-The Streamlit app reads the separate local DuckDB database, so these BigQuery
-models do not automatically update the app's data.
+The local DuckDB pipeline is separate; these BigQuery models do not update
+`data/fpl.duckdb`.
 
 ## Models
 
