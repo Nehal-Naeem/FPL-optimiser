@@ -3,7 +3,10 @@ set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:-fpl-optimizer-511321}"
 REGION="${REGION:-us-central1}"
-DATASET_ID="${DATASET_ID:-fpl_analytics}"
+DATASET_ID="${DATASET_ID:-fpl_build}"
+RAW_DATASET="${RAW_DATASET:-fpl_raw}"
+PUBLISHED_DATASET="${PUBLISHED_DATASET:-fpl_analytics}"
+FPL_SEASON="${FPL_SEASON:-2026-27}"
 BIGQUERY_LOCATION="${BIGQUERY_LOCATION:-US}"
 JOB_NAME="${JOB_NAME:-fpl-dbt-build}"
 REPOSITORY="${REPOSITORY:-fpl-jobs}"
@@ -20,8 +23,11 @@ fi
 BUILD_DIR="$(mktemp -d)"
 trap 'rm -rf "$BUILD_DIR"' EXIT
 cp "${DEPLOY_DIR}/Dockerfile" "${DEPLOY_DIR}/requirements.txt" "${DEPLOY_DIR}/profiles.yml" "$BUILD_DIR/"
+for source in pipeline.py history_ingestion.py dbt_publish.py; do
+    cp "${DEPLOY_DIR}/../../scripts/${source}" "$BUILD_DIR/"
+done
 mkdir "$BUILD_DIR/project"
-for item in dbt_project.yml packages.yml package-lock.yml models macros seeds; do
+for item in dbt_project.yml packages.yml package-lock.yml models macros seeds tests analyses; do
     cp -R "${DEPLOY_DIR}/../../dbt/fpl_optimizer/${item}" "$BUILD_DIR/project/"
 done
 
@@ -30,9 +36,9 @@ gcloud builds submit "$BUILD_DIR" \
 gcloud run jobs deploy "$JOB_NAME" \
     --project="$PROJECT_ID" --region="$REGION" --image="$IMAGE" \
     --service-account="$SERVICE_ACCOUNT" \
-    --set-env-vars="GOOGLE_CLOUD_PROJECT=${PROJECT_ID},DBT_DATASET=${DATASET_ID},BIGQUERY_LOCATION=${BIGQUERY_LOCATION}" \
+    --set-env-vars="GOOGLE_CLOUD_PROJECT=${PROJECT_ID},DBT_DATASET=${DATASET_ID},BIGQUERY_LOCATION=${BIGQUERY_LOCATION},FPL_RAW_DATASET=${RAW_DATASET},FPL_ANALYTICS_DATASET=${PUBLISHED_DATASET},FPL_SEASON=${FPL_SEASON}" \
     --tasks=1 --parallelism=1 --max-retries=0 \
     --task-timeout=1200s --cpu=1 --memory=1Gi
 
-echo "Deployed without execution. Run independently with:"
-echo "gcloud run jobs execute ${JOB_NAME} --project=${PROJECT_ID} --region=${REGION} --wait"
+echo "Deployed without execution. Run the complete refresh through the configured workflow."
+echo "See deploy/fpl-refresh/README.md for rollout and recovery."

@@ -54,6 +54,11 @@ def replacements(squad: list[Pick], players: dict[int, Player]):
 
 
 def optimize(request: OptimizeRequest, players: dict[int, Player], time_limit: float = 10.0):
+    if request.objective == "five_gw_points":
+        from .points_engine import optimize_points
+        return optimize_points(request, players, time_limit)
+    if request.minutes_overrides:
+        raise DomainError("Minutes assumptions apply only to the five-gameweek points mode.")
     if request.mode == "transfers":
         validate_squad(request.squad, players)
     elif request.squad:

@@ -1,186 +1,280 @@
-# FPL Optimiser
+# FPL Optimiser · Touchline
 
-FPL data ingestion and player evaluation pipelines for BigQuery and local DuckDB.
-The React frontend imports public FPL squads, finds cheaper players with higher
-viability, and optimizes full squads or a limited number of transfers.
+A Fantasy Premier League recommendation app for comparing players, finding
+cheaper replacements, and building a legal squad around either relative viability
+or experimental points projections.
 
-## Frontend and API
+**[Open the public app](https://fpl-web-381011398272.us-central1.run.app)**
 
-Use Node 22+ and Python 3.12 for new environments. The web dependencies are
-separate from the ingestion and DuckDB environments:
+## What the app does
+
+- Imports a public FPL team's latest published gameweek squad.
+- Lets you correct the squad, bank and selling prices before analysis.
+- Finds cheaper same-position replacements with higher viability.
+- Builds an ideal 15-player squad or improves an imported squad within an immediate
+  transfer limit.
+- Shows availability news, upcoming fixtures, viability components and recent
+  completed-gameweek points, minutes, starts and xG/xA rates when available.
+- Offers a five-gameweek points plan with weekly starting XIs, captains,
+  vice-captains, bench order, rotation and current-squad comparisons.
+- Supports optional minutes assumptions and flags expensive benches, uncertain
+  playing time, shared club exposure and incomplete or stale data.
+
+Imports use public deadline snapshots, not authenticated access to your FPL
+account. Exact selling prices cannot be recovered from the public API, so imported
+prices are marked as estimates. Squad edits stay in the current browser session;
+reloading the page resets them. The app never makes transfers in FPL.
+
+## How recommendations work
+
+### Relative viability
+
+The current score is:
+
+```text
+viability = 0.30 × form percentile
+          + 0.45 × normalised fixture ease
+          + 0.25 × season points-per-gameweek percentile
+```
+
+Form and points/GW use `CUME_DIST()` within each position among eligible players.
+Eligibility requires more than 60 season minutes. Season points/GW divides total
+points by the number of finished gameweeks.
+
+Fixture ease is a weighted average over the scoring model's next five unfinished
+matches: ease is `6 − difficulty`, weights decrease from 5 to 1, and the average
+is normalised with `(average − 1) / 4`. The legacy scoring fixture set can differ
+from the displayed next five **unstarted** fixtures; player details disclose that
+when it occurs. Five fixtures are not necessarily five gameweeks.
+
+Viability is a relative heuristic, not expected FPL points. Position-relative
+percentiles are not calibrated across positions. Recent historical features add
+context but do not change this formula.
+
+### Cheaper-player suggestions
+
+Each candidate must have the same position, a strictly lower purchase price than
+the outgoing player's selling price, and strictly higher viability. Already-owned
+players and swaps that exceed three players from a club are excluded. Suggestions
+are ordered by viability gain, then savings, then player ID.
+
+Each suggestion is an independent legal swap, rather than a jointly optimised
+transfer sequence. Applying a swap changes only the local squad/bank and recalculates
+suggestions. Players without a viability score have no replacement comparison.
+
+### Squad optimisation
+
+Both objectives use OR-Tools CP-SAT and enforce 15 unique players, 2 GK / 5 DEF /
+5 MID / 3 FWD, at most three per club, and the available budget. Ideal mode defaults
+to £100m. Transfer mode uses the bank, entered selling prices and an immediate
+transfer cap. Money is represented as integer tenths of a million.
+
+| Objective | What it maximises | Reserve and availability handling |
+| --- | --- | --- |
+| **Total squad viability** — default | Sum of all 15 viability scores; ties favour fewer transfers, then lower spend | Bench players count equally. Flagged scored players remain eligible. Unscored owned players stay fixed in transfer mode. |
+| **Five-gameweek points plan** — experimental | Sum of each week's legal XI points plus one extra copy of captain points | Bench cover is secondary; viability is a later tie-break, followed by fewer moves/lower spend. Availability and observed minutes affect selection. |
+
+Both modes have a ten-second solver budget. `OPTIMAL` proves the integer primary
+objective; `FEASIBLE` means a legal result was found without proving optimality.
+Points mode runs secondary objectives only after preceding objectives are proved
+optimal and flags unfinished tie-breaks. It does not numerically blend viability
+and projected points.
+
+### Experimental points and five-week cover
+
+Projections use completed, data-checked fixture history, with recent five-GW
+observations weighted more heavily and positional smoothing for small samples.
+Estimated appearances and minutes feed explainable appearance, goal, assist,
+clean-sheet, save, defensive-contribution, bonus and deduction components.
+Opponent scoring/conceding rates and venue adjust fixture estimates.
+
+The horizon is the next five actionable **gameweek deadlines**, with fewer near
+season end. Double fixtures are summed; assigned blanks score zero; unassigned
+fixtures are flagged and excluded. A passed first deadline blocks planning until
+refresh. Players marked injured, suspended, unavailable or 0% require explicit minutes
+assumptions for every assigned week before they can be selected. Later
+recovery dates are not inferred.
+
+Minutes overrides are deterministic 0–90 minutes **per fixture**, including each
+fixture in a double. The 60-minute threshold changes appearance and clean-sheet
+eligibility. Overrides affect only the request, not stored data.
+
+One squad is selected for the whole horizon, with manual lineup changes before
+each deadline. Every XI has one goalkeeper, at least three defenders, two
+midfielders and one forward. Captain and vice-captain choices, bench order,
+weekly reserve spend and planned starts are shown. Formation-aware single/double
+absence stress tests assess cover using an 80% estimated reserve-appearance
+threshold; these counts are not calibrated confidence levels.
+
+**Limitations:** the points model is experimental and uncalibrated. Headline totals
+exclude autosubs and vice-captain fallback. No future transfer schedule, points
+hits, chips or machine learning are modelled. There is no hard bench-spend cap.
+See [projection methodology and forward evaluation](docs/POINTS_PLANNER.md) for
+coefficients, assumptions and evaluation commands.
+
+## Technology and production infrastructure
+
+| Layer | Technology / responsibility |
+| --- | --- |
+| Frontend | React, TypeScript and Vite; responsive squad, comparison and planner UI |
+| Backend | Python 3.12, FastAPI and Pydantic; validation, public FPL imports and API responses |
+| Optimisation | OR-Tools CP-SAT; budget, squad, transfer and weekly-lineup constraints |
+| Ingestion | Python `requests` and `google-cloud-bigquery`; FPL bootstrap, fixtures and `element-summary/{player_id}/` history |
+| Modelling | dbt Core, BigQuery adapter and dbt-utils; staging/intermediate views, marts, generic/custom SQL and unit tests |
+| Execution | Separate Cloud Run ingestion/dbt jobs and a Cloud Run web service |
+| Scheduling | Cloud Scheduler invokes Google Cloud Workflows; lock-aware sequential refresh |
+| Build / operations | Docker, Cloud Build, Artifact Registry, service-account IAM and Cloud Logging |
+| Testing / local analysis | pytest, DuckDB/sqlglot SQL regressions and Playwright desktop/mobile tests |
+
+Project: `fpl-optimizer-511321`. Cloud Run, Workflows and Artifact Registry use
+`us-central1`; BigQuery datasets use the `US` multi-region.
+
+```mermaid
+flowchart TD
+    Scheduler[Cloud Scheduler: every six hours] --> Workflow[Workflows: fpl-refresh]
+    Workflow --> Ingestion[Cloud Run: fpl-bigquery-ingestion]
+    FPL[Public FPL API] --> Ingestion
+    Ingestion --> Raw[BigQuery: fpl_raw]
+    Workflow --> DBT[Cloud Run: fpl-dbt-build]
+    Raw --> DBT
+    DBT --> Build[BigQuery: fpl_build candidates and tests]
+    Build --> Gate{Critical checks pass?}
+    Gate -->|Yes| Published[BigQuery: fpl_analytics validated snapshot and archives]
+    Gate -->|No| Failure[Log failure; retain previous publication]
+    Published --> API[Cloud Run: fpl-web / FastAPI]
+    API --> UI[React frontend]
+```
+
+### Environments and storage
+
+| Purpose | Production | Development / testing |
+| --- | --- | --- |
+| API inputs, fixture history, checkpoints, manifests and lock | `fpl_raw` | `fpl_raw_localtest` |
+| Candidate dbt models and validation | `fpl_build` | `fpl_build_localtest` |
+| Serving snapshot, compatibility mart and versioned archives | `fpl_analytics` | `fpl_analytics_localtest` |
+
+The development datasets are actively used, not disposable production duplicates.
+The unrelated sample dataset `fpl_analytics_raw` was removed and sample seeds are
+disabled. Production raw API tables, persistent history/control tables and
+published/archive copies have no expiration. Production build objects have a
+seven-day default; development catalog/build objects also have limited retention.
+
+### Refresh, publication and serving
+
+Scheduler `FPL-bigquery-ingestion` uses cron `0 */6 * * *` in `America/Vancouver`.
+Workflow `fpl-refresh` acquires a lock, completes ingestion before dbt, runs source
+freshness and critical model/tests, then publishes validated recommendation data.
+The dbt publisher archives candidates and keeps the previous serving snapshot
+before atomically replacing the serving table. Ingestion/build failures retain the lock for diagnosis; an
+operator must verify jobs are idle before recovery.
+
+Bootstrap and fixtures refresh together. History requests target new players,
+team changes and finished/changed fixtures, with daily recent-two-completed-GW
+checks and weekly full reconciliation. Requests use bounded concurrency/retries;
+BigQuery merges use `(season, player_id, fixture_id)` to apply corrections without
+duplicating records. Unchanged runs can update the collection heartbeat without
+rebuilding rankings; expired projection horizons force a rebuild.
+
+The public `fpl-web` service enables `FPL_USE_PUBLISHED_SNAPSHOT=true` and reads
+`fpl_analytics.mart_recommendation_snapshot`. Its identity has BigQuery Job User
+and table-level read access, without raw/build dataset grants. It serves the UI
+and API on one origin, caches the dataset for five minutes per process and gzip
+compresses responses. Calculations pin the dataset version; stale client versions
+receive HTTP 409. Backend cache-refresh failures return an error; pipeline
+failures leave the last validated publication in place. Successful collection
+checks determine the freshness indicator.
+
+Cloud Run is configured for 1 CPU, 1 GiB, concurrency 4, zero minimum instances,
+three maximum instances and a 120-second request timeout. The code's default
+reader remains legacy for compatibility; deployments must explicitly select the
+published reader to expose history and projections.
+
+## API
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/health` | Process health; does not check BigQuery |
+| `GET /api/players` | Versioned catalog, historical context and projection data; checks data access |
+| `GET /api/teams/{team_id}` | Import a public published squad with estimated selling prices |
+| `POST /api/replacements` | Independent cheaper/higher-viability swaps |
+| `POST /api/optimize` | Ideal/transfer optimisation with the selected objective |
+
+FastAPI's interactive contract is available at `/docs`. Credentials stay on the
+backend; browser requests never access BigQuery directly.
+
+## Run locally
+
+Use Python 3.12, Node 22+ and Application Default Credentials with the required
+BigQuery permissions. Serving needs Job User and read access to the development
+serving snapshot; refreshing needs write/provisioning access to the development
+datasets and access to the existing production catalog schemas.
 
 ```sh
 python3.12 -m venv .venv-web
 .venv-web/bin/python -m pip install -r backend/requirements-dev.txt
 gcloud auth application-default login
-.venv-web/bin/python -m uvicorn backend.app:app --reload --port 8000
+npm --prefix frontend ci
+npm --prefix frontend run build
+bash scripts/serve_local.sh
 ```
 
-In a second terminal:
+Open `http://127.0.0.1:8000`. The wrapper serves the built UI and API against the
+published `_localtest` snapshot by default. It does not refresh data or deploy
+anything. If the development snapshot is absent or stale, run the refresh below
+first. For Vite development and configuration details, see the
+[frontend/local guide](deploy/frontend/README.md).
+
+To refresh real development data, activate a **separate Python 3.12 dbt
+environment**, then run:
 
 ```sh
-cd frontend
-npm ci
-npm run dev
+python -m pip install -r deploy/dbt-build/requirements.txt -r tests/dbt/requirements.txt
+dbt deps --project-dir dbt/fpl_optimizer --profiles-dir deploy/dbt-build
+python scripts/local_refresh.py
 ```
 
-Open `http://127.0.0.1:5173`. Vite proxies `/api` to FastAPI. Application Default
-Credentials need BigQuery Job User and read access to `fpl_raw` and
-`fpl_analytics`. Credentials stay on the server. See
-[deployment instructions](deploy/frontend/README.md) for a single-origin Cloud Run
-image and a dedicated runtime identity. Deployment is a separate manual step.
+The refresh wrapper requires three distinct `_localtest` datasets and runs
+ingestion, dbt checks and publication. Use explicit environments/profiles for
+manual dbt commands; do not assume a target named `dev` writes to development.
 
-The interface supports editing the imported deadline snapshot, bank, and selling
-prices. Selling prices initially use marked market-price estimates: the public
-team API does not expose purchase history or exact selling prices. Changes are
-local to the current browser session and never execute FPL transfers. Reloading
-the page resets squad edits.
+`main.py`, `fixtures.py`, notebooks and `scripts/experimental/` provide a separate
+local DuckDB/analysis path. They are not used by the deployed app, and cloud
+refreshes do not update `data/fpl.duckdb`.
 
-Player cards, replacement comparisons, and optimizer results show the next five
-unstarted fixtures per club, including separate matches in double gameweeks.
-Badges show opponent abbreviations and H/A with difficulty colours. Focus or
-select a badge for the full opponent, gameweek, local kickoff time, and
-difficulty; Escape or selecting outside dismisses details. Undated matches appear
-after dated matches with a TBC label. Fewer than five remaining matches are shown
-without invented fixtures. Fixture updates participate in dataset versioning.
-
-Clicking an open fixture badge again collapses its details; clicking another
-switches the displayed match. Keyboard focus still opens details, while Enter
-and Space toggle them.
-
-Hover over a player name for a compact statistics preview after 200ms. Click
-once to keep it open, and click again to close it. Touch users tap to toggle;
-keyboard users activate a focused name with Enter/Space. Only one player
-popover is shown at a time. Escape, the close button, or an outside click closes
-it. Previews remain open while moving between the name and popover; pinned
-popovers stay open when the pointer leaves. Scrolling outside a popover dismisses
-it, and resizing repositions it within the viewport. Popovers do not resize
-cards and are rendered outside scrolling lists to avoid clipping.
-
-The popover shows form and points-per-gameweek percentiles from the existing
-BigQuery model, as percentages to one decimal place. Missing values display
-"Unavailable". Comparisons are within position among scored players. Squad-card
-popovers include a collapsed weighted-score breakdown and availability news.
-Percentile values remain hidden until requested; no double-click is required.
-
-Replacement suggestions must be same-position, strictly cheaper than the
-outgoing selling price, and strictly higher in viability, while preserving club
-limits and avoiding already-owned players. Each is an independent swap. Applying
-one updates the local bank and recalculates suggestions for the edited squad.
-
-The optimizer maximizes total squad viability, including bench players, using
-OR-Tools CP-SAT with a ten-second limit. It enforces 2 GK / 5 DEF / 5 MID / 3 FWD,
-at most three per club, unique players, and the chosen budget. Ideal mode defaults
-to £100m. Transfer mode defaults to one transfer, funded by bank and actual sale
-proceeds; ties favor fewer transfers, then more money remaining. Injured or
-flagged scored players stay eligible, with warnings. Unscored imported players
-stay fixed in transfer mode and are excluded from comparisons and ideal squads.
-Viability is a ranking metric, not predicted FPL points; points hits, captaincy,
-starting XI selection, and multiweek planning are not modeled.
-
-### Validation
+## Validate changes
 
 ```sh
 .venv-web/bin/python -m pytest backend/tests -q
-cd frontend
-npm run build
-npx playwright install chromium  # Once, if no local browser is configured.
-npm test
+# From the separate dbt environment described above:
+python -m pytest tests/ingestion tests/dbt -q
+npm --prefix frontend run build
+npm --prefix frontend test
 ```
 
-Browser tests launch a deterministic test-only API (`backend.tests.preview`) and
-exercise the real optimizer on desktop and mobile. They make no production API
-or BigQuery requests. On macOS, an installed Chrome can be used without a browser
-download:
+Playwright tests start deterministic preview servers on ports 8002/5174 and do
+not access production BigQuery. Install its Chromium browser once with
+`cd frontend && npx playwright install chromium`, or set
+`PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to an installed Chrome executable.
+Documentation-only edits need link/consistency and whitespace checks rather than
+cloud executions or the entire application test suite.
 
-```sh
-PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH='/Applications/Google Chrome.app/Contents/MacOS/Google Chrome' npm test
-```
+## Deployment, recovery and maintenance
 
-Browser tests use ports 8002 and 5174, independently of the local app on 8000 and 5173. API documentation is at
-`http://127.0.0.1:8000/docs`. `/api/health` is a process check;
-`/api/players` also verifies cloud data access. Requests carry a dataset version
-and return HTTP 409 if the cached data has refreshed. Reloading player data in the
-interface preserves squad edits and clears stale calculations.
+Deployments are explicit operator actions. Use the existing workflow for cloud
+refreshes rather than executing its ingestion/dbt jobs independently. Web builds
+use an allowlisted context, immutable image tags and private-first smoke tests
+before public access is granted.
 
-## Architecture and technologies
+- [Ingestion setup and deployment](deploy/bigquery-ingestion/README.md)
+- [dbt build and publication](deploy/dbt-build/README.md)
+- [Workflow rollout, scheduling and recovery](deploy/fpl-refresh/README.md)
+- [Web deployment and local configuration](deploy/frontend/README.md)
+- [Models and data-quality semantics](dbt/fpl_optimizer/README.md)
+- [Points methodology and evaluation](docs/POINTS_PLANNER.md)
+- [Dated production verification and recovery assets](deploy/fpl-refresh/PRODUCTION_VALIDATION.md)
 
-- The public Fantasy Premier League API supplies player, team, gameweek,
-  position, and fixture data. HTTP requests use `requests`.
-- Python, pandas, and DuckDB power the local refresh and evaluation pipeline.
-- Separate Python 3.12 Docker containers run ingestion and dbt as Cloud Run jobs.
-  Cloud Build builds the image, Artifact Registry stores it, and the
-  `google-cloud-bigquery` client loads data into BigQuery. Cloud Scheduler triggers
-  a Google Cloud Workflow every six hours to run ingestion before the dbt build.
-- dbt and `dbt_utils` define BigQuery staging views, intermediate views, and a
-  player evaluation mart.
-
-The local DuckDB and BigQuery pipelines are separate. Refreshing BigQuery or
-running dbt does not update `data/fpl.duckdb`.
-
-## Local DuckDB pipeline
-
-From the project directory (Python 3.9+):
-
-```sh
-python3 -m venv .venv  # Only needed if the environment does not exist.
-.venv/bin/python -m pip install -r requirements.txt
-.venv/bin/python main.py
-```
-
-`main.py` fetches current FPL data and rebuilds the raw tables, fixture tables,
-player outlook, and `mart_player_evaluation` in `data/fpl.duckdb`. Run it from the
-project directory so its relative database path resolves correctly.
-
-## Files
-
-- `main.py`: local DuckDB refresh and evaluation pipeline.
-- `fixtures.py`: standalone local fixture-fetching script.
-- `data/fpl.duckdb`: existing local database snapshot.
-- `data/history/{fixtures,gws,teams}/`: historical seasonal CSVs.
-- `notebooks/history.ipynb`: historical CSV analysis. Data paths work when the
-  notebook kernel starts in the project root or in `notebooks/`.
-- `scripts/bigquery_ingestion.py`: BigQuery raw ingestion script.
-- `deploy/bigquery-ingestion/`: Cloud Run deployment configuration and instructions.
-- `dbt/fpl_optimizer/`: BigQuery transformation models and dbt configuration.
-- `scripts/experimental/squad_fetch_demo.py`: squad-fetching prototype with a
-  hardcoded team ID and gameweek.
-- `scripts/experimental/player_ranking_query.py`: exploratory DuckDB ranking query
-  with weights of 0.35 form, 0.40 fixture ease, and 0.25 points. Production weights
-  in `main.py` remain 0.30, 0.45, and 0.25 respectively.
-- `.venv/`: local Python environment, kept in place and excluded by `.gitignore`.
-
-Run experimental scripts from the project directory:
-
-```sh
-.venv/bin/python scripts/experimental/squad_fetch_demo.py
-.venv/bin/python scripts/experimental/player_ranking_query.py
-```
-
-## BigQuery ingestion job
-
-Cloud Run job `fpl-bigquery-ingestion` runs `scripts/bigquery_ingestion.py` in
-project `fpl-optimizer-511321`, region `us-central1`. It replaces the `players`,
-`gameweeks`, `positions`, `teams`, and `fixtures` tables in `fpl_raw`.
-
-The runtime service account is
-`fpl-ingestion@fpl-optimizer-511321.iam.gserviceaccount.com`, with
-`roles/bigquery.jobUser` and `roles/bigquery.dataEditor` granted at project level.
-Ingestion runs as part of the scheduled refresh workflow. To run ingestion alone:
-
-```sh
-gcloud run jobs execute fpl-bigquery-ingestion \
-  --project=fpl-optimizer-511321 --region=us-central1 --wait
-```
-
-The separate `fpl-dbt-build` Cloud Run job refreshes transformations in
-`fpl_analytics`. The `fpl-refresh` workflow runs ingestion and then dbt, waiting
-for each job to succeed. Scheduler `FPL-bigquery-ingestion` triggers the workflow
-at 00:00, 06:00, 12:00, and 18:00 `America/Vancouver`; manual workflow runs remain
-available. Deployment scripts do not execute the jobs; a separate `schedule.sh`
-configures the existing scheduler. See the [dbt job instructions](deploy/dbt-build/README.md)
-and [refresh workflow instructions](deploy/fpl-refresh/README.md).
-
-To deploy `scripts/bigquery_ingestion.py` as a Google Cloud Run job, follow the
-[setup and deployment instructions](deploy/bigquery-ingestion/README.md).
-For the BigQuery transformation models, see the [dbt README](dbt/fpl_optimizer/README.md).
+Keep this README current in the same change whenever functionality,
+infrastructure, configuration or recommendation logic changes. Document verified
+production separately from code that is implemented but not deployed. Keep
+image tags, execution IDs, historical test counts and incident details in dated
+deployment records. See [repository documentation instructions](AGENTS.md).

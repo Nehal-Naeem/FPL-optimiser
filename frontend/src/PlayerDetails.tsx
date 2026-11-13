@@ -15,9 +15,10 @@ export function PlayerDetailsProvider({ children }: { children: ReactNode }) {
 
 const percentile = (value: number | null) => value == null ? 'Unavailable' : `${(value * 100).toFixed(1)}%`;
 const score = (value: number | null) => value == null ? 'Unavailable' : value.toFixed(3);
+const stat = (value: number | null | undefined, decimals = 0) => value == null ? 'Unavailable' : value.toFixed(decimals);
 
 /** One viewport-positioned popover for the workspace; player data stays unchanged. */
-export function PlayerDetails({ player, heading = false, breakdown = false }: {
+export function PlayerDetails({ player, heading = false, breakdown = true }: {
   player: Player; heading?: boolean; breakdown?: boolean;
 }) {
   const context = useContext(PopoverContext);
@@ -78,7 +79,6 @@ export function PlayerDetails({ player, heading = false, breakdown = false }: {
       if (!trigger.current || !panel.current) return;
       const anchor = trigger.current.getBoundingClientRect();
       anchorPosition.current = { left: anchor.left, top: anchor.top };
-      const popup = panel.current.getBoundingClientRect();
       const viewport = window.visualViewport;
       const leftEdge = (viewport?.offsetLeft ?? 0) + 12;
       const topEdge = (viewport?.offsetTop ?? 0) + 12;
@@ -88,8 +88,14 @@ export function PlayerDetails({ player, heading = false, breakdown = false }: {
         setActive(current => current?.id === id ? null : current);
         return;
       }
+      // A longer history panel must scroll on its own instead of covering its trigger.
+      const below = Math.max(0, bottomEdge - anchor.bottom - 8);
+      const above = Math.max(0, anchor.top - topEdge - 8);
+      const useBelow = below >= Math.min(panel.current.scrollHeight, 420) || below >= above;
+      panel.current.style.maxHeight = `${Math.min(420, useBelow ? below : above)}px`;
+      const popup = panel.current.getBoundingClientRect();
       const left = Math.max(leftEdge, Math.min(anchor.left, rightEdge - popup.width));
-      const preferredTop = anchor.bottom + 8 + popup.height <= bottomEdge ? anchor.bottom + 8 : anchor.top - popup.height - 8;
+      const preferredTop = useBelow ? anchor.bottom + 8 : anchor.top - popup.height - 8;
       const top = Math.max(topEdge, Math.min(preferredTop, bottomEdge - popup.height));
       setPosition(previous => previous.left === left && previous.top === top ? previous : { left, top });
     };
@@ -181,13 +187,50 @@ export function PlayerDetails({ player, heading = false, breakdown = false }: {
         <div><dt>Points-per-gameweek percentile</dt><dd>{percentile(player.points_percentile)}</dd></div>
       </dl>
       <p className="percentile-context">Compared with scored players in the same position.</p>
+      <p className="percentile-context">Position-relative viability is a heuristic, not expected FPL points.</p>
+      {player.recent ? <section className="recent-form" aria-label="Recent completed gameweeks">
+        <strong>Last {player.recent.window_gameweeks} completed GWs</strong>
+        <p className="percentile-context">GW {player.recent.window_start_gameweek}–{player.recent.cutoff_gameweek} · {player.recent.covered_gameweeks}/{player.recent.window_gameweeks} covered</p>
+        {!player.recent.complete ? <p>History incomplete. Recent performance is unavailable.</p> : <dl className="recent-values">
+          <div><dt>Points</dt><dd>{stat(player.recent.points)}</dd></div>
+          <div><dt>Minutes</dt><dd>{stat(player.recent.minutes)}</dd></div>
+          <div><dt>Starts</dt><dd>{stat(player.recent.starts)}</dd></div>
+          <div><dt>Points / GW</dt><dd>{stat(player.recent.points_per_gw, 1)}</dd></div>
+          <div><dt>Minutes / GW</dt><dd>{stat(player.recent.minutes_per_gw, 1)}</dd></div>
+          <div><dt>Points / 90</dt><dd>{stat(player.recent.points_per_90, 1)}</dd></div>
+          <div><dt>xG / 90</dt><dd>{stat(player.recent.xg_per_90, 2)}</dd></div>
+          <div><dt>xA / 90</dt><dd>{stat(player.recent.xa_per_90, 2)}</dd></div>
+        </dl>}
+        {player.recent.minutes === 0 && <p className="percentile-context">No minutes recorded; per-90 rates are unavailable.</p>}
+        <p className="percentile-context">Blanks and missed appearances count in the GW average; double fixtures are summed. These statistics do not change the current score.</p>
+        {player.recent.history_checked_at && <p className="percentile-context">History checked {new Date(player.recent.history_checked_at).toLocaleString()}</p>}
+      </section> : <p className="percentile-context">Historical context unavailable for this snapshot.</p>}
+      {!!player.projections?.length && <section className="projection-details" aria-label="Experimental points projections">
+        <strong>Experimental points · next {player.projections.length} GWs</strong>
+        <p className="percentile-context">Estimated FPL points, separate from viability. Playing-time likelihoods and point estimates are uncalibrated; inspect assumptions.</p>
+        {player.projections.map(w => <details key={w.gameweek}>
+          <summary>GW {w.gameweek} · {stat(w.expected_points, 1)} pts · {stat(w.expected_minutes)} min{w.minutes_overridden ? ' (assumed)' : ''}</summary>
+          <p className="percentile-context">{w.fixtures.map(f => `${f.opponent} (${f.home_away})`).join(' / ') || 'No assigned fixtures'} · {w.availability_note}</p>
+          <dl className="recent-values">
+            {([['Appearance', w.appearance_points], ['Goals', w.goal_points], ['Assists', w.assist_points],
+              ['Clean sheets', w.clean_sheet_points], ['Saves', w.save_points], ['Penalty saves', w.penalty_save_points],
+              ['Defensive contribution', w.defensive_points], ['Bonus', w.bonus_points], ['Deductions', w.deduction_points]] as [string, number][])
+              .map(([label, value]) => <div key={label}><dt>{label}</dt><dd>{stat(value, 2)}</dd></div>)}
+          </dl>
+          <p className="percentile-context">{w.history_minutes} observed minutes across {w.history_fixtures} fixtures · {w.data_support.replaceAll('_',' ')}.
+            {w.unassigned_fixtures && ' Unassigned fixtures are excluded.'} As of {new Date(w.as_of).toLocaleString()}.</p>
+        </details>)}
+      </section>}
       {breakdown && <details className="score-breakdown">
         <summary>Score breakdown</summary>
-        {player.score === null ? <p>Score unavailable. This player stays fixed in transfer mode.</p> : <div className="components">
-          <span>Form <b>{score(player.form_percentile)} × 30%</b></span>
-          <span>Fixture ease <b>{score(player.normalized_fixture_ease)} × 45%</b></span>
-          <span>Points / GW <b>{score(player.points_percentile)} × 25%</b></span>
+        {player.score === null ? <p>Score unavailable. This player stays fixed in viability transfer mode.</p> : <div className="components">
+          <span>Form <b>{score(player.form_percentile)} × 30%{player.form_contribution != null && ` = ${score(player.form_contribution)}`}</b></span>
+          <span>Fixture ease <b>{score(player.normalized_fixture_ease)} × 45%{player.fixture_contribution != null && ` = ${score(player.fixture_contribution)}`}</b></span>
+          <span>Points / GW <b>{score(player.points_percentile)} × 25%{player.points_contribution != null && ` = ${score(player.points_contribution)}`}</b></span>
         </div>}
+        {player.scoring_fixtures && player.scoring_fixtures.map(f => f.id).join(',') !== player.upcoming_fixtures.map(f => f.id).join(',') && <p className="percentile-context">
+          The unchanged scoring model uses a different fixture set: {player.scoring_fixtures.map(f => `${f.opponent_short} (${f.home_away})`).join(', ') || 'none'}. Upcoming badges exclude started matches and put undated matches last.
+        </p>}
       </details>}
       {player.news && <p className="player-news">{player.news}</p>}
     </div>, document.body)}

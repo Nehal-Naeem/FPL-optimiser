@@ -1,0 +1,58 @@
+version: 2
+unit_tests:
+  - name: recent_form_completed_windows
+    description: Blanks count, doubles sum before rolling, active GWs are excluded, zero minutes yield null per-90.
+    model: int_player_recent_form
+    given:
+      - input: ref('stg_gameweeks')
+        rows:
+          - {id: 1, finished: true, data_checked: true}
+          - {id: 2, finished: true, data_checked: true}
+          - {id: 3, finished: true, data_checked: true}
+          - {id: 4, finished: true, data_checked: true}
+          - {id: 5, finished: true, data_checked: true}
+          - {id: 6, finished: true, data_checked: true}
+          - {id: 7, finished: false, data_checked: false}
+      - input: ref('int_player_gameweek_history')
+        rows:
+          - {season: '2026-27', player_id: 1, gameweek: 1, covered: true, points: 20, minutes: 90, starts: 1, xg: 1, xa: 0}
+          - {season: '2026-27', player_id: 1, gameweek: 2, covered: true, points: 0, minutes: 0, starts: 0, xg: 0, xa: 0}
+          - {season: '2026-27', player_id: 1, gameweek: 3, covered: true, points: 0, minutes: 0, starts: 0, xg: 0, xa: 0}
+          - {season: '2026-27', player_id: 1, gameweek: 4, covered: true, points: 12, minutes: 180, starts: 2, xg: 1, xa: 1}
+          - {season: '2026-27', player_id: 1, gameweek: 5, covered: true, points: -1, minutes: 30, starts: 0, xg: 0, xa: 0}
+          - {season: '2026-27', player_id: 1, gameweek: 6, covered: true, points: 4, minutes: 90, starts: 1, xg: 0, xa: 0}
+          - {season: '2026-27', player_id: 2, gameweek: 1, covered: true, points: 0, minutes: 0, starts: 0, xg: 0, xa: 0}
+          - {season: '2026-27', player_id: 2, gameweek: 2, covered: true, points: 0, minutes: 0, starts: 0, xg: 0, xa: 0}
+          - {season: '2026-27', player_id: 2, gameweek: 3, covered: true, points: 0, minutes: 0, starts: 0, xg: 0, xa: 0}
+          - {season: '2026-27', player_id: 2, gameweek: 4, covered: true, points: 0, minutes: 0, starts: 0, xg: 0, xa: 0}
+          - {season: '2026-27', player_id: 2, gameweek: 5, covered: true, points: 0, minutes: 0, starts: 0, xg: 0, xa: 0}
+          - {season: '2026-27', player_id: 2, gameweek: 6, covered: true, points: 0, minutes: 0, starts: 0, xg: 0, xa: 0}
+    expect:
+      rows:
+        - {player_id: 1, cutoff_gameweek: 1, window_gameweeks: 1, points: 20, minutes: 90}
+        - {player_id: 1, cutoff_gameweek: 2, window_gameweeks: 2, points: 20, minutes: 90}
+        - {player_id: 1, cutoff_gameweek: 3, window_gameweeks: 3, points: 20, minutes: 90}
+        - {player_id: 1, cutoff_gameweek: 4, window_gameweeks: 4, points: 32, minutes: 270}
+        - {player_id: 1, cutoff_gameweek: 5, window_gameweeks: 5, points: 31, minutes: 300}
+        - {player_id: 1, cutoff_gameweek: 6, window_gameweeks: 5, points: 15, minutes: 300}
+        - {player_id: 2, cutoff_gameweek: 1, window_gameweeks: 1, points: 0, minutes: 0}
+        - {player_id: 2, cutoff_gameweek: 2, window_gameweeks: 2, points: 0, minutes: 0}
+        - {player_id: 2, cutoff_gameweek: 3, window_gameweeks: 3, points: 0, minutes: 0}
+        - {player_id: 2, cutoff_gameweek: 4, window_gameweeks: 4, points: 0, minutes: 0}
+        - {player_id: 2, cutoff_gameweek: 5, window_gameweeks: 5, points: 0, minutes: 0}
+        - {player_id: 2, cutoff_gameweek: 6, window_gameweeks: 5, points: 0, minutes: 0}
+
+  - name: recent_form_zero_minutes_and_missing_collection
+    model: int_player_recent_form
+    given:
+      - input: ref('stg_gameweeks')
+        rows:
+          - {id: 1, finished: true, data_checked: true}
+      - input: ref('int_player_gameweek_history')
+        rows:
+          - {season: '2026-27', player_id: 2, gameweek: 1, covered: true, points: 0, minutes: 0, starts: 0, xg: 0, xa: 0}
+          - {season: '2026-27', player_id: 3, gameweek: 1, covered: false, points: null, minutes: null, starts: null, xg: null, xa: null}
+    expect:
+      rows:
+        - {player_id: 2, complete: true, covered_gameweeks: 1, points: 0, points_per_90: null, xg_per_90: null, xa_per_90: null}
+        - {player_id: 3, complete: false, covered_gameweeks: 0, points: null, points_per_90: null, xg_per_90: null, xa_per_90: null}

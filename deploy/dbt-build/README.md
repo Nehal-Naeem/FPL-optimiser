@@ -1,76 +1,48 @@
-# dbt build Cloud Run job
+# Candidate dbt build and validated publication
 
-`fpl-dbt-build` runs `dbt build --select '+mart_player_eval'` once and exits with
-dbt's status. It builds the nine FPL models, excludes the starter seeds, and does
-not ingest raw data. The existing model schema files declare no data tests yet.
+`fpl-dbt-build` retains its separate Cloud Run identity/job. Its Python entrypoint
+now checks workflow lock ownership and exactly one complete ingestion manifest,
+including the run ID in every raw catalog table.
 
-## Setup and deployment
+It runs source freshness, then `dbt build --exclude resource_type:seed` against
+`fpl_build`. This includes all model/data/unit tests and the shadow comparison
+mart. Critical failures, skipped resources, missing required model results, and
+nonzero dbt exit statuses block publication. Warnings are logged and permitted.
+Starter seeds stay excluded. dbt Core 1.10.15 and adapter 1.10.2 remain pinned.
 
-Run from the repository root with `gcloud`, `bq`, and Python 3 installed. The
-deploying account needs permission to enable APIs, create datasets and service
-accounts, grant IAM, submit builds, deploy jobs, and act as the runtime service
-account. Reuse the existing `fpl-jobs` Artifact Registry repository and Cloud
-Build identity configured for ingestion.
+On success it archives evaluation, shadow, and serving candidate tables with the
+workflow UUID suffix, preserves the previous serving snapshot, publishes the
+compatibility `mart_player_eval`, then copies the serving snapshot atomically.
+All published/archived copies have expiration explicitly removed. Archives store
+forward observations, including season totals, recent features, fixture inputs,
+prices, availability and baseline scores; past corrected API rows alone cannot
+reconstruct the historical recommendation state.
 
-```sh
-gcloud auth login
-bash deploy/dbt-build/setup.sh
-bash deploy/dbt-build/deploy.sh
-```
+The API serving boundary is **one table**, `mart_recommendation_snapshot`.
+Compatibility mart publication is separate and is not a pipeline-wide atomic
+transaction. The web backend in published mode never joins that mart to raw.
 
-Setup checks `fpl_raw`'s location, creates `fpl_analytics` in that location if
-absent, and refuses an existing output dataset in a different location. It grants
-`fpl-dbt@fpl-optimizer-511321.iam.gserviceaccount.com`:
+Unchanged runs skip dbt and update the serving collection heartbeat. Actual
+scores and publication ID stay unchanged; stale status uses the successful check
+time. `FPL_FORCE_BUILD=true` forces a build, useful after a deliberate rollback.
+A previous failed/unpublished run or failed-run history corrections force rebuild.
 
-- BigQuery Job User on the project.
-- BigQuery Data Viewer on `fpl_raw`.
-- BigQuery Data Editor on `fpl_analytics`.
+## Configuration and permissions
 
-The profile uses `method: oauth` and Application Default Credentials from the
-attached Cloud Run identity. No local profile or service-account key is uploaded.
-The deploy script uploads only an explicit allowlist of project source files and
-deployment configuration. Cloud Build installs dependencies, installs locked dbt
-packages, and parses the project before publishing the image.
+- `GOOGLE_CLOUD_PROJECT`: default `fpl-optimizer-511321`.
+- `DBT_DATASET`: default **`fpl_build`**, must differ from raw and published.
+- `FPL_RAW_DATASET`: default `fpl_raw`; source declarations use it.
+- `FPL_ANALYTICS_DATASET`: default `fpl_analytics`.
+- `BIGQUERY_LOCATION`: default `US`; all datasets must match.
+- `FPL_SEASON`: default `2026-27`; match ingestion.
+- `FPL_RUN_ID`: supplied by the workflow; direct runs without ownership fail.
 
-Defaults: project `fpl-optimizer-511321`, region `us-central1`, repository
-`fpl-jobs`, one task, one CPU, 1 GiB memory, 20-minute timeout, zero task retries.
-dbt uses four threads and a 15-minute per-query timeout. The non-root runtime
-writes logs and artifacts under `/tmp/dbt`; console output goes to Cloud Logging.
-Local artifacts are ephemeral and are not uploaded to persistent storage.
+`setup.sh` provisions the build dataset with a seven-day default expiration and
+validates locations. It grants dbt project Job User, raw Data Viewer, build and
+published Data Editor, plus table-level manifest updates. It does not grant dbt
+ownership of the refresh lock. `deploy.sh` uploads explicit source/tests/scripts,
+builds the image, and deploys without execution. Credentials use attached ADC.
 
-Override `PROJECT_ID`, `REGION`, `DATASET_ID`, `BIGQUERY_LOCATION`, `JOB_NAME`,
-`REPOSITORY`, or `SERVICE_ACCOUNT` for deployment. `BIGQUERY_LOCATION` defaults
-to `US`; use the location printed by setup. Setup also accepts `RAW_DATASET` and
-`SERVICE_ACCOUNT_NAME`. Match the deployment identity to any setup override.
-Raw source declarations still target `fpl-optimizer-511321.fpl_raw`; changing
-deployment variables alone does not retarget those sources.
-
-## Execution and inspection
-
-Deployment does not run the job. After raw ingestion succeeds:
-
-```sh
-gcloud run jobs execute fpl-dbt-build \
-  --project=fpl-optimizer-511321 --region=us-central1 --wait
-gcloud run jobs logs read fpl-dbt-build \
-  --project=fpl-optimizer-511321 --region=us-central1 --limit=100
-```
-
-Use the [refresh workflow](../fpl-refresh/README.md) for the full pipeline. An
-independent dbt rerun uses whatever raw snapshot is currently available. Avoid
-overlapping job or workflow executions.
-
-## Dependency updates
-
-`requirements.in` pins stable dbt Core and adapter versions; `requirements.txt`
-pins the complete resolved dependency set for Python 3.12. Update the input,
-resolve all dependencies for Python 3.12, and rebuild to validate on Linux. Keep
-the committed dbt package lockfile in sync with `packages.yml`. No package
-installation or Git checkout occurs during job execution.
-
-## Validation
-
-The image build runs `pip check`, `dbt deps`, and `dbt parse`. Validate execution
-against BigQuery after deployment; parsing does not prove SQL execution succeeds.
-Confirm five staging views, three intermediate views, and the evaluation table
-appear in `fpl_analytics`. Raw tables remain in `fpl_raw`.
+See [rollout, scheduling and recovery](../fpl-refresh/README.md). Shell setup,
+container validation, IAM tests, BigQuery adapter execution and concurrency/failure
+injection remain required before production activation.

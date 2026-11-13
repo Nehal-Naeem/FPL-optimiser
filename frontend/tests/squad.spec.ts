@@ -309,3 +309,59 @@ test('replacement info icons stay aligned for short and wrapped names', async ({
   await expect(page.getByRole('dialog', { name: 'Value Defender statistics', exact: true })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
 });
+
+test('recent history exposes measured statistics, missing metrics and incomplete coverage', async ({ page }) => {
+  await page.goto('/');
+  await page.getByLabel('FPL team ID').fill('123');
+  await page.getByRole('button', { name: 'Import squad', exact: true }).click();
+  await expect(page.locator('.player-card').first()).toContainText('Low minutes · 48/GW');
+  await page.getByRole('button', { name: 'Player 1 statistics', exact: true }).click();
+  const popup = page.getByRole('dialog', { name: 'Player 1 statistics', exact: true });
+  await expect(popup).toContainText('Last 5 completed GWs');
+  await expect(popup).toContainText('GW 6–10 · 5/5 covered');
+  await expect(popup.locator('.recent-form .recent-values dd')).toHaveText(['14', '240', '3', '2.8', '48.0', '5.3', '0.15', 'Unavailable']);
+  await expect(popup).toContainText('not expected FPL points');
+  await page.getByRole('button', { name: 'Player 2 statistics', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: 'Player 2 statistics', exact: true })).toContainText('No minutes recorded');
+  await page.getByRole('button', { name: 'Player 3 statistics', exact: true }).click();
+  const incomplete = page.getByRole('dialog', { name: 'Player 3 statistics', exact: true });
+  await expect(incomplete).toContainText('History incomplete');
+  await expect(incomplete.locator('.recent-form .recent-values')).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+});
+
+test('optimizer diagnostics explain allocation, club exposure and objective limits', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build ideal squad' }).click();
+  await page.getByRole('button', { name: 'Optimize squad', exact: true }).click();
+  const diagnostics = page.getByRole('region', { name: 'Squad diagnostics' });
+  await expect(diagnostics).toContainText('All 15 players contribute equally');
+  await expect(diagnostics).toContainText('captaincy are not modelled');
+  await expect(diagnostics.locator('.budget-allocation dd')).toHaveCount(4);
+  await expect(diagnostics).toContainText('At least £5m remains');
+  await expect(diagnostics).toContainText('Club selections:');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+});
+
+test('points mode plans weekly XIs, captaincy, cover and explicit minutes', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: 'Build ideal squad' }).click();
+  await page.getByLabel('Optimisation objective').selectOption('five_gw_points');
+  await page.getByText('Playing-time assumptions', { exact: false }).click();
+  await page.getByLabel('Player for minutes assumptions').selectOption('16');
+  await page.getByLabel('Value Defender GW 11 minutes per fixture').fill('60');
+  await page.getByRole('button', { name: 'Optimize squad', exact: true }).click();
+  const planner = page.getByRole('region', { name: 'Five-gameweek plan' });
+  await expect(planner).toBeVisible();
+  await expect(planner.locator('.weekly-xi .weekly-player')).toHaveCount(11);
+  await expect(planner.locator('.five-week-table tbody tr')).toHaveCount(15);
+  await expect(planner).toContainText('Captain (C)');
+  await expect(planner).toContainText('Vice-captain (VC)');
+  await expect(planner).toContainText('Bench 3');
+  await expect(planner).toContainText('These are stress tests, not forecast probabilities');
+  await planner.getByRole('button', { name: 'GW 15', exact: true }).click();
+  await expect(planner.getByRole('heading', { name: 'GW 15: starting XI' })).toBeVisible();
+  await planner.locator('.weekly-xi .player-name').first().click();
+  await expect(page.getByRole('dialog')).toContainText('Experimental points');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth)).toBe(false);
+});

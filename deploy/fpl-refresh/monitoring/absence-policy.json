@@ -1,0 +1,15 @@
+{
+  "displayName": "FPL refresh has not succeeded for 12 hours",
+  "combiner": "OR",
+  "enabled": true,
+  "conditions": [{
+    "displayName": "No successful refresh",
+    "conditionAbsent": {
+      "filter": "resource.type=\"workflows.googleapis.com/Workflow\" AND resource.labels.workflow_id=\"fpl-refresh\" AND metric.type=\"logging.googleapis.com/user/fpl_refresh_success\"",
+      "duration": "43200s",
+      "aggregations": [{"alignmentPeriod": "21600s", "perSeriesAligner": "ALIGN_SUM"}],
+      "trigger": {"count": 1}
+    }
+  }],
+  "documentation": {"mimeType": "text/markdown", "content": "Check Scheduler, fpl-refresh executions and refresh_control ownership. A retained lock deliberately blocks later runs after failure; investigate before unlocking. This policy needs at least one successful metric observation before absence can be evaluated."}
+}

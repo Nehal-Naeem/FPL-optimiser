@@ -1,0 +1,7 @@
+name: fpl_refresh_success
+description: Successful complete FPL refresh workflows, including verified unchanged inputs.
+filter: 'resource.type="workflows.googleapis.com/Workflow" AND jsonPayload.message="FPL refresh succeeded"'
+metricDescriptor:
+  metricKind: DELTA
+  valueType: INT64
+  unit: '1'

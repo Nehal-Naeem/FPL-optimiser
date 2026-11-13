@@ -2,6 +2,8 @@ SELECT
     id,
     name,
     finished,
+    data_checked,
+    deadline_time,
     is_previous,
     is_current,
     is_next,

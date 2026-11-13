@@ -15,5 +15,8 @@ SELECT
     bonus,
     defensive_contribution,
     starts,
+    status,
+    news,
+    chance_of_playing_next_round,
     ingested_at
 FROM {{ source('fpl_raw','players')}}

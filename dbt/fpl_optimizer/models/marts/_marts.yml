@@ -15,8 +15,40 @@ models:
               arguments:
                 expression: "> 0"
       - name: viability_score
+        description: Nullable without future fixture coverage; relative heuristic, never expected points.
         data_tests:
-          - not_null
           - dbt_utils.expression_is_true:
               arguments:
                 expression: "between 0 and 1"
+
+  - name: mart_recommendation_snapshot
+    description: Atomic serving boundary with all catalog players, scoring inputs and collection metadata.
+    columns:
+      - name: id
+        data_tests: [not_null, unique]
+      - name: publication_id
+        data_tests: [not_null]
+      - name: price
+        data_tests:
+          - dbt_utils.expression_is_true:
+              arguments: {expression: '> 0'}
+      - name: team_id
+        data_tests: [not_null]
+      - name: position
+        data_tests:
+          - accepted_values:
+              arguments: {values: [1, 2, 3, 4], quote: false}
+      - name: name
+        data_tests: [not_null]
+      - name: club
+        data_tests: [not_null]
+      - name: scores_updated_at
+        data_tests: [not_null]
+      - name: catalog_updated_at
+        data_tests: [not_null]
+      - name: fixtures_updated_at
+        data_tests: [not_null]
+      - name: last_checked_at
+        data_tests: [not_null]
+      - name: season
+        data_tests: [not_null]

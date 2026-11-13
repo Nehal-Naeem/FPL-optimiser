@@ -1,98 +1,96 @@
-from google.cloud import bigquery
-import requests
-from datetime import datetime, timezone
+"""Refresh raw FPL data. Importing this module never accesses the network."""
+import json
+import logging
 import os
+from datetime import datetime, timezone
+from google.cloud import bigquery
+try:
+    from .history_ingestion import fetch_json, fetch_histories, select_players, validate_season
+    from .pipeline import Pipeline, content_hash
+except ImportError:
+    from history_ingestion import fetch_json, fetch_histories, select_players, validate_season
+    from pipeline import Pipeline, content_hash
 
-PROJECT_ID = os.environ.get('GOOGLE_CLOUD_PROJECT', 'fpl-optimizer-511321')
-DATASET_ID = os.environ.get('BIGQUERY_DATASET', 'fpl_raw')
+BOOTSTRAP_TABLES = {"elements": "players", "events": "gameweeks",
+                    "element_types": "positions", "teams": "teams"}
+BASE_URL = "https://fantasy.premierleague.com/api"
 
-client = bigquery.Client(project=PROJECT_ID)
-# table_id = "fpl-optimizer-511321.fpl_raw.players"
-
-fixtures_url = "https://fantasy.premierleague.com/api/fixtures"
-bootstrap_url = "https://fantasy.premierleague.com/api/bootstrap-static/"
-
-def fetch_json(url):
-    response = requests.get(url, timeout=(10, 60))
-    response.raise_for_status()
-    return response.json()
-
-
-bootstrap = fetch_json(bootstrap_url)
-fixtures = fetch_json(fixtures_url)
-
-ingested_at = datetime.now(timezone.utc).isoformat()
-
-bootstrap_tables = {
-    "elements" : "players",
-    "events" : "gameweeks",
-    "element_types" : "positions",
-    "teams" : "teams"
-}
-
-job_config = bigquery.LoadJobConfig(
-    write_disposition = "WRITE_TRUNCATE"
-)
 
 def replace_empty_dicts(obj):
     if isinstance(obj, dict):
-        if not obj:
-            return None
-        
-        return {
-            k: replace_empty_dicts(v)
-            for k, v in obj.items()
-        }
-
+        return {k: replace_empty_dicts(v) for k, v in obj.items()} if obj else None
     if isinstance(obj, list):
-        return [
-            replace_empty_dicts(v)
-            for v in obj
-        ]
-
+        return [replace_empty_dicts(v) for v in obj]
     return obj
 
-bootstrap = replace_empty_dicts(bootstrap)
 
-jobs = []
+def validate_catalog(bootstrap, fixtures):
+    """Reject partial inputs before replacing any current raw table."""
+    for source in BOOTSTRAP_TABLES:
+        rows = bootstrap.get(source)
+        if not isinstance(rows, list) or not rows or len({r["id"] for r in rows}) != len(rows):
+            raise ValueError(f"Empty or duplicated {source}")
+    if not fixtures or len({f["id"] for f in fixtures}) != len(fixtures):
+        raise ValueError("Empty or duplicated fixtures")
+    teams = {t["id"] for t in bootstrap["teams"]}
+    positions = {p["id"] for p in bootstrap["element_types"]}
+    if any(p["team"] not in teams or p["element_type"] not in positions
+           or p["now_cost"] <= 0 for p in bootstrap["elements"]):
+        raise ValueError("Invalid player mapping/price")
+    if any(f["team_h"] not in teams or f["team_a"] not in teams for f in fixtures):
+        raise ValueError("Invalid fixture team")
 
-for source_key, table_name in bootstrap_tables.items():
-    
-    rows = bootstrap[source_key]
 
-    for row in rows:
-        row["ingested_at"] = ingested_at
+def ingest(pipeline, fetch=fetch_json, history_fetch=fetch_histories, now=None):
+    now = now or datetime.now(timezone.utc)
+    pipeline.claim_stage("ingestion")
+    bootstrap = replace_empty_dicts(fetch(f"{BASE_URL}/bootstrap-static/"))
+    fixtures = fetch(f"{BASE_URL}/fixtures/")
+    validate_catalog(bootstrap, fixtures)
+    validate_season(pipeline.season, bootstrap["events"])
+    checks = pipeline.player_checks()
+    previous = pipeline.previous_fixtures()
+    selected, full_sweep, daily = select_players(
+        bootstrap["elements"], fixtures, previous, checks, bootstrap["events"], now)
+    logging.info("History selection run_id=%s players=%s full_sweep=%s daily=%s",
+                 pipeline.run_id, len(selected), full_sweep, daily)
+    histories = history_fetch(selected, pipeline.season, pipeline.run_id, now)
+    observed_players = {h["player_id"] for h in histories}
+    if any(p["id"] in selected and p.get("minutes", 0) > 0 and p["id"] not in observed_players
+           for p in bootstrap["elements"]):
+        raise ValueError("Empty history for a player with recorded season minutes")
+    fixture_ids = {f["id"] for f in fixtures}
+    if any(h["fixture_id"] not in fixture_ids for h in histories):
+        raise ValueError("History references unknown current-season fixture")
+    digest = content_hash({"bootstrap": bootstrap, "fixtures": fixtures})
+    previous_run = pipeline.latest_success()
+    changed_history = pipeline.merge_history(histories)
+    stamp = now.isoformat()
+    raw_tables = {table: bootstrap[key] for key, table in BOOTSTRAP_TABLES.items()}
+    raw_tables["fixtures"] = fixtures
+    # Serving never reads these independently replaced raw tables.
+    for table, rows in raw_tables.items():
+        pipeline.load_catalog(table, [dict(row, ingested_at=stamp, run_id=pipeline.run_id) for row in rows])
+    pipeline.assert_owner()
+    pipeline.record_checks(selected, bootstrap["elements"], full_sweep, daily, now)
+    needs_build = (not previous_run or not previous_run.get("published_at")
+                   or previous_run["content_hash"] != digest or changed_history > 0 or bool(selected)
+                   or pipeline.history_changed_since(previous_run["checked_at"]))
+    pipeline.complete_ingestion(digest, len(selected), len(histories), changed_history, needs_build, now)
+    logging.info(json.dumps({"stage": "ingestion_complete", "run_id": pipeline.run_id,
+                            "selected": len(selected), "history_rows": len(histories),
+                            "changed_history": changed_history, "needs_build": needs_build}))
 
-    table_id = f"{PROJECT_ID}.{DATASET_ID}.{table_name}"
 
-    job = client.load_table_from_json(
-        rows,
-        table_id,
-        job_config=job_config
-    )
-
-    jobs.append((table_name, job))
-
-for fixture in fixtures:
-    fixture["ingested_at"] = ingested_at
-
-fixtures_job = client.load_table_from_json(
-    fixtures,
-    f"{PROJECT_ID}.{DATASET_ID}.fixtures",
-    job_config=job_config
-)
-
-jobs.append(("fixtures", fixtures_job))
-
-failed_tables = []
-for table_name, job in jobs:
+def main():
+    logging.basicConfig(level=logging.INFO)
+    pipeline = Pipeline(bigquery.Client(project=os.getenv("GOOGLE_CLOUD_PROJECT", "fpl-optimizer-511321")))
     try:
-        job.result()
-        print(f"Successfully loaded {table_name}", flush=True)
-    except Exception as e:
-        print(f"Failed to load {table_name}")
-        print(e, flush=True)
-        failed_tables.append(table_name)
+        ingest(pipeline)
+    except Exception:
+        logging.exception("Ingestion failed run_id=%s; publication blocked", pipeline.run_id)
+        raise
 
-if failed_tables:
-    raise RuntimeError(f"BigQuery loads failed: {', '.join(failed_tables)}")
+
+if __name__ == "__main__":
+    main()

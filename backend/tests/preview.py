@@ -1,9 +1,9 @@
 """Deterministic browser-test server. Never used by the production entrypoint."""
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from backend.app import app, fpl, get_dataset
-from backend.models import Dataset, DomainError, Pick, Player, UpcomingFixture
+from backend.models import Dataset, DomainError, Pick, Player, RecentForm, UpcomingFixture, FixtureProjection, GameweekProjection
 
 
 def fixture_dataset():
@@ -23,6 +23,30 @@ def fixture_dataset():
                      kickoff_time=datetime(2026, 11, 14 + i, 15, tzinfo=timezone.utc) if i < 5 else None,
                      difficulty=i) for i in range(1, 6))
     players = [p.model_copy(update={"upcoming_fixtures": fixtures if p.id != 15 else ()}) for p in players]
+    recent = RecentForm(cutoff_gameweek=10, window_start_gameweek=6, window_gameweeks=5,
+        covered_gameweeks=5, complete=True, history_checked_at=datetime.now(timezone.utc),
+        points=14, minutes=240, starts=3, points_per_gw=2.8, minutes_per_gw=48,
+        points_per_90=5.25, xg_per_90=0.15, xa_per_90=None, short_window_gameweeks=3,
+        short_points_per_gw=3, short_minutes_per_gw=60)
+    players = [p.model_copy(update={"recent": recent}) if p.id==1 else
+               p.model_copy(update={"recent": recent.model_copy(update={"minutes": 0, "starts": 0,
+                   "points": 0, "points_per_90": None, "xg_per_90": None, "xa_per_90": None, "minutes_per_gw": 0})}) if p.id==2 else
+               p.model_copy(update={"recent": recent.model_copy(update={"complete": False, "covered_gameweeks": 4,
+                   "points": None, "minutes": None, "starts": None})}) if p.id==3 else p for p in players]
+    projected = []
+    for p in players:
+        weeks = []
+        for i in range(5):
+            xp = 3 + (p.id % 5) / 2 + (1 if i % 2 == p.id % 2 else 0)
+            fixture = FixtureProjection(fixture_id=100+i, opponent_id=20, opponent='Opponent', home_away='H',
+                expected_points=xp, expected_minutes=90, play_probability=1, sixty_probability=1,
+                appearance_points=2, goal_points=xp-2, xg_per_minute=0.005)
+            weeks.append(GameweekProjection(gameweek=11+i, deadline_time=datetime(2099,1,1,tzinfo=timezone.utc)+timedelta(days=i*7),
+                as_of=datetime.now(timezone.utc),fixture_count=1,expected_points=xp,expected_minutes=90,
+                play_probability=1,sixty_probability=1,appearance_points=2,goal_points=xp-2,
+                fixtures=(fixture,),history_fixtures=10,history_minutes=900,data_support='observed_history'))
+        projected.append(p.model_copy(update={'projections':tuple(weeks)}))
+    players = projected
     return Dataset(version="browser-test-v1", players=tuple(players), gameweeks=(),
                    scores_updated_at=datetime.now(timezone.utc), catalog_updated_at=datetime.now(timezone.utc),
                    fixtures_updated_at=datetime.now(timezone.utc))

@@ -3,6 +3,9 @@ set -euo pipefail
 
 PROJECT_ID="${PROJECT_ID:-fpl-optimizer-511321}"
 REGION="${REGION:-us-central1}"
+RAW_DATASET="${RAW_DATASET:-fpl_raw}"
+BIGQUERY_LOCATION="${BIGQUERY_LOCATION:-US}"
+[[ "$RAW_DATASET" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]
 INGESTION_JOB="${INGESTION_JOB:-fpl-bigquery-ingestion}"
 DBT_JOB="${DBT_JOB:-fpl-dbt-build}"
 SERVICE_ACCOUNT_NAME="${SERVICE_ACCOUNT_NAME:-fpl-workflow}"
@@ -47,3 +50,23 @@ for job in "$INGESTION_JOB" "$DBT_JOB"; do
         sleep 5
     done
 done
+
+# Environment overrides carry a workflow-owned run ID; invoker alone cannot apply them.
+if gcloud iam roles describe fplRunWithOverrides --project="$PROJECT_ID" > /dev/null 2>&1; then
+    gcloud iam roles update fplRunWithOverrides --project="$PROJECT_ID" \
+        --permissions=run.jobs.runWithOverrides --stage=GA
+else
+    gcloud iam roles create fplRunWithOverrides --project="$PROJECT_ID" \
+        --title="FPL job execution overrides" --permissions=run.jobs.runWithOverrides --stage=GA
+fi
+for job in "$INGESTION_JOB" "$DBT_JOB"; do
+    gcloud run jobs add-iam-policy-binding "$job" --project="$PROJECT_ID" --region="$REGION" \
+        --member="serviceAccount:${SERVICE_ACCOUNT}" \
+        --role="projects/${PROJECT_ID}/roles/fplRunWithOverrides"
+done
+gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role=roles/bigquery.jobUser --condition=None --format='value(etag)'
+gcloud projects add-iam-policy-binding "$PROJECT_ID" --member="serviceAccount:${SERVICE_ACCOUNT}" \
+    --role=roles/logging.logWriter --condition=None --format='value(etag)'
+bq --project_id="$PROJECT_ID" --location="$BIGQUERY_LOCATION" query --use_legacy_sql=false \
+    "GRANT \`roles/bigquery.dataEditor\` ON TABLE \`${PROJECT_ID}.${RAW_DATASET}.refresh_control\` TO 'serviceAccount:${SERVICE_ACCOUNT}'"

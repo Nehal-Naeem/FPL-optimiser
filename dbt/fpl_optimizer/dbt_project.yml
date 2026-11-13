@@ -2,6 +2,10 @@ name: fpl_optimizer
 
 profile: fpl_optimizer
 
+query-comment:
+  comment: "{{ tojson({'application': 'fpl_optimizer', 'fpl_run': env_var('FPL_RUN_ID', 'local_validation')}) }}"
+  job-label: true
+
 seed-paths: ["seeds"]
 model-paths: ["models"]
 macro-paths: ["macros"]
@@ -10,9 +14,9 @@ clean-targets:
   - "dbt_packages"
 
 seeds:
-  # Builds seeds into '<your_schema_name>_raw'
+  # Sample Jaffle Shop CSVs remain available for recovery, but are not FPL inputs.
   fpl_optimizer:
-    +schema: raw
+    +enabled: false
 
 models:
   fpl_optimizer:

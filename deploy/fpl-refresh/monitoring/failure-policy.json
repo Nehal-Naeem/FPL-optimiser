@@ -1,0 +1,16 @@
+{
+  "displayName": "FPL refresh failure",
+  "combiner": "OR",
+  "enabled": true,
+  "conditions": [{
+    "displayName": "Refresh failed and retained its lock",
+    "conditionMatchedLog": {
+      "filter": "resource.type=\"workflows.googleapis.com/Workflow\" AND severity>=ERROR AND jsonPayload.message=\"Refresh failed; lock retained. Verify jobs are idle before operator unlock.\""
+    }
+  }],
+  "alertStrategy": {
+    "notificationRateLimit": {"period": "3600s"},
+    "autoClose": "86400s"
+  },
+  "documentation": {"mimeType": "text/markdown", "content": "Inspect the workflow run_id, Cloud Run executions and pipeline_runs. Publication remains on the last validated snapshot. Follow deploy/fpl-refresh/README.md before clearing refresh_control ownership."}
+}

@@ -1,10 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import { api } from './api';
-import type { Alternative, Catalog, Imported, Pick, Player, Replacement, Result } from './types';
+import type { Alternative, Catalog, Imported, MinutesOverride, Pick, Player, Replacement, Result } from './types';
 import './styles.css';
 import { FixtureStrip } from './FixtureStrip';
 import { PlayerDetails, PlayerDetailsProvider } from './PlayerDetails';
+import { FiveWeekPlan, MinutesAssumptions } from './FiveWeekPlan';
 
 const positions = ['', 'Goalkeepers', 'Defenders', 'Midfielders', 'Forwards'];
 const shorts = ['', 'GK', 'DEF', 'MID', 'FWD'];
@@ -20,9 +21,11 @@ function Shirt({ position, muted = false }: { position: number; muted?: boolean 
 }
 
 function Availability({ player }: { player: Player }) {
-  return player.status !== 'a' ? <span className="availability" title={player.news || 'Availability flagged'}>
-    ⚠ {player.chance_of_playing == null ? 'Flagged' : `${player.chance_of_playing}% chance`}
-  </span> : null;
+  const recent = player.recent;
+  return <>{player.status !== 'a' && <span className="availability" title={player.news || 'Availability flagged'}>
+    ⚠ {player.chance_of_playing == null ? 'Flagged' : `${player.chance_of_playing}% FPL chance`}
+  </span>}{recent?.complete && recent.minutes_per_gw != null && recent.minutes_per_gw < 60 &&
+    <span className="availability">Low minutes · {recent.minutes_per_gw.toFixed(0)}/GW</span>}</>;
 }
 
 function MoneyInput({ label, value, onChange, disabled = false }: {
@@ -77,6 +80,8 @@ function App() {
   const [teamId, setTeamId] = useState('');
   const [tab, setTab] = useState<'squad' | 'value' | 'optimizer'>('squad');
   const [mode, setMode] = useState<'ideal' | 'transfers'>('transfers');
+  const [objective, setObjective] = useState<'viability' | 'five_gw_points'>('viability');
+  const [minutesOverrides, setMinutesOverrides] = useState<MinutesOverride[]>([]);
   const [budget, setBudget] = useState(1000);
   const [cap, setCap] = useState(1);
   const [alternatives, setAlternatives] = useState<Replacement[]>();
@@ -95,7 +100,7 @@ function App() {
 
   async function loadCatalog() {
     setError(''); setBusy('Loading player data');
-    try { setCatalog(await api<Catalog>('/players')); setAlternatives(undefined); setResult(undefined); }
+    try { setCatalog(await api<Catalog>('/players')); setAlternatives(undefined); setResult(undefined); setMinutesOverrides([]); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(''); }
   }
@@ -133,7 +138,8 @@ function App() {
 
   async function runOptimizer(e: React.FormEvent) {
     e.preventDefault(); setError(''); setResult(undefined); setBusy('Optimizing your squad');
-    try { setResult(await api<Result>('/optimize', { ...payload(), mode, budget, max_transfers: cap })); }
+    try { setResult(await api<Result>('/optimize', { ...payload(), mode, budget, max_transfers: cap, objective,
+      minutes_overrides: objective === 'five_gw_points' ? minutesOverrides : [] })); }
     catch (e) { setError((e as Error).message); }
     finally { setBusy(''); }
   }
@@ -186,8 +192,10 @@ function App() {
 
         {error && <div className="banner error" role="alert"><span>{error}</span><button className="text-button" onClick={() => void loadCatalog()} disabled={!!busy}>Reload player data</button></div>}
         {notice && <div className="banner" role="status">{notice}</div>}
-        {catalog?.stale && <div className="banner warning-banner">Scores are more than 12 hours old. Results use the displayed data snapshot.</div>}
-        {(unscored > 0 || missing > 0) && <div className="banner warning-banner">{missing > 0 ? `${missing} players are missing from this catalog. Re-import your team.` : `${unscored} players have no viability score. They remain fixed in transfer mode; total viability is partial.`}</div>}
+        {catalog?.stale && <div className="banner warning-banner">No successful data check in more than 12 hours. Results use the displayed data snapshot.</div>}
+        {catalog?.last_checked_at && <p className="fine-print">Data checked {date(catalog.last_checked_at)} · Scores calculated {date(catalog.scores_updated_at)}</p>}
+        {catalog && !catalog.published && <p className="fine-print">Legacy data source. Historical context and validated snapshot publishing are not enabled yet.</p>}
+        {(unscored > 0 || missing > 0) && <div className="banner warning-banner">{missing > 0 ? `${missing} players are missing from this catalog. Re-import your team.` : `${unscored} players have no viability score. They remain fixed in viability transfer mode; total viability is partial. Points planning uses projection coverage.`}</div>}
         {busy && <div className="loading" role="status"><span className="spinner" />{busy}…</div>}
 
         <section className="stats" aria-label="Squad summary">
@@ -205,7 +213,7 @@ function App() {
             <div className="section-heading"><div><h2>Your squad</h2><p className="subtle">Player prices, viability scores, and next five fixtures.</p></div><span className="pill">2 GK · 5 DEF · 5 MID · 3 FWD</span></div>
             {squad.length > 0 && <div className="bank-editor"><MoneyInput label="Money in the bank" value={bank} disabled={!!busy} onChange={n => { setBank(n); invalidate(); }} /><p>Correct this balance if you have made transfers since the deadline.</p></div>}
             {!squad.length ? <div className="empty-squad"><div className="pitch" aria-hidden="true"><div className="pitch-center" />{[1, 2, 3, 4].map(pos => <div className="pitch-row" key={pos}>{Array.from({ length: pos === 1 ? 2 : pos === 4 ? 3 : 5 }, (_, i) => <div key={i}><Shirt position={pos} muted /><span>—</span></div>)}</div>)}</div><div className="empty-message"><h2>No squad imported</h2><p>Enter a team ID to view its published squad, player scores, and fixtures. You can also optimize a new squad without importing a team.</p><button className="button secondary" onClick={() => { setMode('ideal'); setTab('optimizer'); }}>Build ideal squad <span aria-hidden="true">→</span></button></div></div> :
-              [1, 2, 3, 4].map(pos => <div className="position-group" key={pos}><div className="position-title"><h3>{positions[pos]}</h3><span>{selected.filter(p => p.position === pos).length} PLAYERS</span></div><div className="player-grid">{selected.filter(p => p.position === pos).map(player => <PlayerCard key={player.id} player={player} pick={squad.find(p => p.player_id === player.id)} onEdit={!busy ? () => setEditing(player.id) : undefined} />)}</div></div>)}
+              [1, 2, 3, 4].map(pos => <div className="position-group" key={pos}><div className="position-title"><h3>{positions[pos]}</h3><span>{selected.filter(p => p.position === pos).length} PLAYERS · {money(selected.filter(p => p.position === pos).reduce((sum, p) => sum + p.price, 0))}</span></div><div className="player-grid">{selected.filter(p => p.position === pos).map(player => <PlayerCard key={player.id} player={player} pick={squad.find(p => p.player_id === player.id)} onEdit={!busy ? () => setEditing(player.id) : undefined} />)}</div></div>)}
           </>}
 
           {tab === 'value' && <>
@@ -217,22 +225,38 @@ function App() {
           </>}
 
           {tab === 'optimizer' && <>
-            <div className="section-heading"><div><h2>Squad optimizer</h2><p className="subtle">Maximize total viability within budget, position, and club limits.</p></div><span className="pill">15 PLAYERS · MAX 3 PER CLUB</span></div>
+            <div className="section-heading"><div><h2>Squad optimizer</h2><p className="subtle">Choose a squad objective within budget, position, and club limits.</p></div><span className="pill">15 PLAYERS · MAX 3 PER CLUB</span></div>
             <div className="optimizer-layout"><form className="optimizer-controls" onSubmit={runOptimizer}>
+              <label className="field">Optimisation objective<select value={objective} disabled={!!busy} onChange={e => { setObjective(e.target.value as typeof objective); setResult(undefined); }}>
+                <option value="viability">Total squad viability (existing)</option>
+                <option value="five_gw_points" disabled={!catalog?.projection_gameweeks?.length}>Five-gameweek points plan (beta)</option>
+              </select></label>
+              {objective === 'five_gw_points' && <p className="control-note">Prioritises weekly starting XIs and captains. Reserves earn value through rotation and cover; viability is a tie-breaker. Projections are experimental.</p>}
+              {!catalog?.projection_gameweeks?.length && <p className="fine-print">Points planning requires a refreshed projection snapshot.</p>}
+              {objective === 'five_gw_points' && catalog?.projection_stale && <p className="diagnostic-note">The first projection deadline has passed. Refresh the dataset before planning.</p>}
               <div className="mode-toggle"><button type="button" aria-pressed={mode === 'transfers'} className={mode === 'transfers' ? 'chosen' : ''} onClick={() => { setMode('transfers'); setResult(undefined); }} disabled={!!busy}>Improve my squad</button><button type="button" aria-pressed={mode === 'ideal'} className={mode === 'ideal' ? 'chosen' : ''} onClick={() => { setMode('ideal'); setResult(undefined); }} disabled={!!busy}>Build ideal squad</button></div>
               {mode === 'transfers' ? <>
                 <p>Optimize your current squad using up to the specified number of transfers.</p>
                 <label className="field">Maximum transfers<input aria-label="Maximum transfers" type="number" min="0" max="15" step="1" required value={cap} disabled={!!busy} onChange={e => { setCap(e.target.valueAsNumber); setResult(undefined); }} /></label>
                 <MoneyInput label="Money in the bank" value={bank} disabled={!!busy} onChange={n => { setBank(n); invalidate(); }} />
                 <div className="control-note">Budget = bank + proceeds from outgoing players. Check estimated selling prices in Your squad.</div>
-              </> : <><p>Select a new 15-player squad with the highest total viability within your budget.</p><MoneyInput label="Squad budget" value={budget} disabled={!!busy} onChange={n => { setBudget(n); setResult(undefined); }} /></>}
-              <button className="button primary" disabled={!!busy || !catalog || (mode === 'transfers' && (squad.length !== 15 || !!missing))} type="submit">Optimize squad <span aria-hidden="true">↗</span></button>
+              </> : <><p>Select a new 15-player squad within your budget.</p><MoneyInput label="Squad budget" value={budget} disabled={!!busy} onChange={n => { setBudget(n); setResult(undefined); }} /></>}
+              {objective === 'five_gw_points' && <MinutesAssumptions players={players} gameweeks={catalog?.projection_gameweeks ?? []}
+                overrides={minutesOverrides} onChange={value => { setMinutesOverrides(value); setResult(undefined); }} disabled={!!busy} />}
+              <button className="button primary" disabled={!!busy || !catalog || (objective === 'five_gw_points' && catalog.projection_stale) || (mode === 'transfers' && (squad.length !== 15 || !!missing))} type="submit">Optimize squad <span aria-hidden="true">↗</span></button>
               {mode === 'transfers' && !squad.length && <p className="fine-print">Import a squad first, or switch to Build ideal squad.</p>}
               <div className="rules"><span>✓ Position quotas</span><span>✓ Up to 3 per club</span><span>✓ No duplicate players</span><span>✓ Within budget</span></div>
             </form><div className="optimizer-output" aria-live="polite">
-              {!result ? <div className="optimizer-empty"><h3>No optimization result</h3><p>Set a budget or transfer limit, then select Optimize squad.</p><span className="fine-print">Based on squad viability, not predicted points.</span></div> : result.players.length === 0 ? <div className="empty-panel"><h3>{result.status === 'INFEASIBLE' ? 'No feasible squad' : 'No result yet'}</h3><p>{result.message}</p></div> : <>
-                <div className="result-header"><span className="eyebrow">{result.status === 'OPTIMAL' ? 'OPTIMAL SQUAD FOUND' : 'FEASIBLE SQUAD · OPTIMALITY NOT PROVEN'}</span><h3>{score(result.viability)} <small>total viability</small></h3></div>
+              {!result ? <div className="optimizer-empty"><h3>No optimization result</h3><p>Set a budget or transfer limit, then select Optimize squad.</p><span className="fine-print">{objective === 'five_gw_points' ? 'Experimental points guide weekly XIs and captaincy.' : 'Based on squad viability, not predicted points.'}</span></div> : result.players.length === 0 ? <div className="empty-panel"><h3>{result.status === 'INFEASIBLE' ? 'No feasible squad' : 'No result yet'}</h3><p>{result.message}</p></div> : <>
+                <div className="result-header"><span className="eyebrow">{result.status === 'OPTIMAL' ? 'OPTIMAL SQUAD FOUND' : 'FEASIBLE SQUAD · OPTIMALITY NOT PROVEN'}</span><h3>{result.objective === 'five_gw_points' ? result.projected_points?.toFixed(1) : score(result.viability)} <small>{result.objective === 'five_gw_points' ? 'projected XI + captain points' : 'total viability'}</small></h3></div>
+                {result.objective === 'five_gw_points' && <FiveWeekPlan result={result} />}
                 <div className="result-stats"><span>Remaining <b>{money(result.remaining_budget)}</b></span><span>Purchases <b>{money(result.purchase_cost)}</b></span>{mode === 'transfers' && <><span>Sales <b>{money(result.sale_proceeds)}</b></span><span>Transfers <b>{result.transfers}</b></span></>}{result.viability_gain !== null && <span>Viability gain <b>{result.viability_gain >= 0 ? '+' : ''}{result.viability_gain.toFixed(3)}</b></span>}</div>
+                {result.diagnostics && <section className="squad-diagnostics" aria-label="Squad diagnostics">
+                  <p className="fine-print">Optimality applies to {result.objective === 'five_gw_points' ? 'the projected XI and captain objective' : 'summed viability'}. {result.diagnostics.methodology}</p>
+                  <dl className="budget-allocation">{result.diagnostics.budget_by_position.map(row => <div key={row.position}><dt>{shorts[row.position]}</dt><dd>{money(row.market_value)}</dd></div>)}</dl>
+                  <p className="fine-print">Club selections: {result.diagnostics.club_counts.map(row => `${result.players.find(p => p.team_id === row.team_id)?.club ?? row.team_id} ${row.players}`).join(' · ')}</p>
+                  {result.diagnostics.warnings.map((warning, i) => <p className="diagnostic-note" key={`${warning.code}-${i}`}>{warning.message}</p>)}
+                </section>}
                 {result.estimated_selling_prices && <p className="fine-print">Budget uses estimated selling prices. Confirm these in FPL before making transfers.</p>}
                 {result.fixed_unscored.length > 0 && <p className="fine-print">Unscored players were retained. Total viability and gain cover scored players only.</p>}
                 {mode === 'transfers' && <div className="transfer-summary"><p><strong>OUT</strong> {result.outgoing.map(p => p.name).join(', ') || 'None'}</p><p><strong>IN</strong> {result.incoming.map(p => p.name).join(', ') || 'None'}</p></div>}

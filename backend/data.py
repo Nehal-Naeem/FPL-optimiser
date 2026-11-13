@@ -60,6 +60,9 @@ class BigQueryRepository:
         self.project = identifier(os.getenv("GOOGLE_CLOUD_PROJECT", "fpl-optimizer-511321"))
         self.raw = identifier(os.getenv("FPL_RAW_DATASET", "fpl_raw"))
         self.analytics = identifier(os.getenv("FPL_ANALYTICS_DATASET", "fpl_analytics"))
+        # Explicit migration switch: enable only after the first validated publication.
+        # Published mode never silently falls back to mixed raw/mart reads.
+        self.published = os.getenv("FPL_USE_PUBLISHED_SNAPSHOT", "false").lower() == "true"
         self.client = None
         self._snapshot = None
         self._expires = 0.0
@@ -86,6 +89,8 @@ class BigQueryRepository:
     def _load(self) -> Dataset:
         if self.client is None:
             self.client = bigquery.Client(project=self.project)
+        if self.published:
+            return self._load_published()
         # Only validated configuration identifiers are interpolated. No user input enters SQL.
         rows = list(self._query(f"""
             SELECT p.id, p.web_name, p.team, p.element_type, p.now_cost,
@@ -137,6 +142,22 @@ class BigQueryRepository:
         return Dataset(version=version, players=players, gameweeks=gameweeks,
                        scores_updated_at=table.modified, catalog_updated_at=catalog_time,
                        fixtures_updated_at=fixture_table.modified)
+
+    def _load_published(self) -> Dataset:
+        rows = [dict(r) for r in self._query(
+            f"SELECT * FROM `{self.project}.{self.analytics}.mart_recommendation_snapshot`")]
+        if not rows or len({r["id"] for r in rows}) != len(rows):
+            raise ValueError("Empty or duplicated published catalog")
+        metadata = ("publication_id", "scores_updated_at", "catalog_updated_at", "fixtures_updated_at",
+                    "last_checked_at", "season")
+        if any(any(row[k] != rows[0][k] for k in metadata) for row in rows):
+            raise ValueError("Inconsistent publication metadata")
+        players = tuple(Player.model_validate({k: v for k, v in r.items() if k in Player.model_fields}) for r in rows)
+        first = rows[0]
+        return Dataset(version=first["publication_id"], players=players, published=True,
+                       scores_updated_at=first["scores_updated_at"], catalog_updated_at=first["catalog_updated_at"],
+                       fixtures_updated_at=first["fixtures_updated_at"], last_checked_at=first["last_checked_at"],
+                       season=first["season"])
 
 
 class FPLClient:

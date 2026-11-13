@@ -27,6 +27,20 @@ viability AS (
 )
 
 SELECT
-    *,
-    SAFE_DIVIDE(viability_score, cost) AS viability_by_cost
-FROM viability
+    v.*,
+    SAFE_DIVIDE(v.viability_score, v.cost) AS viability_by_cost,
+    r.cutoff_gameweek AS recent_cutoff_gameweek,
+    r.window_gameweeks AS recent_window_gameweeks,
+    r.complete AS recent_complete,
+    r.points AS recent_points,
+    r.minutes AS recent_minutes,
+    r.starts AS recent_starts,
+    r.points_per_gw AS recent_points_per_gw,
+    r.minutes_per_gw AS recent_minutes_per_gw,
+    r.xg_per_90 AS recent_xg_per_90,
+    r.xa_per_90 AS recent_xa_per_90
+FROM viability v
+LEFT JOIN (
+    SELECT * FROM {{ ref('int_player_recent_form') }}
+    QUALIFY cutoff_gameweek=MAX(cutoff_gameweek) OVER ()
+) r ON r.player_id=v.id

@@ -12,7 +12,7 @@ COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt && pip check
 COPY profiles.yml /app/profiles/profiles.yml
 COPY project/ ./
+COPY pipeline.py history_ingestion.py dbt_publish.py ./
 RUN dbt deps && dbt parse --no-partial-parse && rm -rf /tmp/dbt
 USER 65532:65532
-ENTRYPOINT ["dbt"]
-CMD ["build", "--select", "+mart_player_eval"]
+ENTRYPOINT ["python", "dbt_publish.py"]

@@ -4,13 +4,16 @@ from pathlib import Path
 from fastapi import Depends, FastAPI, Path as ApiPath, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.middleware.gzip import GZipMiddleware
 
 from .data import BigQueryRepository, FPLClient
 from .engine import optimize, replacements
+from .diagnostics import squad_diagnostics
 from .models import Dataset, DomainError, OptimizeRequest, SquadRequest
 
 logger = logging.getLogger(__name__)
 app = FastAPI(title="FPL Optimiser", version="1.0.0")
+app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 repository = BigQueryRepository()
 fpl = FPLClient()
 
@@ -55,6 +58,8 @@ def replacement_analysis(body: SquadRequest, dataset: Dataset = Depends(get_data
 def optimization(body: OptimizeRequest, dataset: Dataset = Depends(get_dataset)):
     check_version(body.dataset_version, dataset)
     result = optimize(body, {p.id: p for p in dataset.players})
+    if result["players"]:
+        result["diagnostics"] = squad_diagnostics(result["players"], result["remaining_budget"], body.objective)
     logger.info("Optimization mode=%s status=%s elapsed=%.3f", body.mode, result["status"], result["elapsed_seconds"])
     return {**dataset.metadata(), "source_gameweek": body.source_gameweek, **result}
 

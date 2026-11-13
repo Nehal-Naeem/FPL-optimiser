@@ -1,0 +1,40 @@
+version: 2
+models:
+  - name: int_projection_horizon
+    description: Next five actionable deadlines captured as of this ingestion manifest; fewer at season end.
+    columns:
+      - name: gameweek
+        data_tests: [unique, not_null]
+  - name: int_player_projection_rates
+    description: Weighted completed fixture observations with two-match appearance and 360-minute component priors.
+    columns:
+      - name: player_id
+        data_tests: [unique, not_null]
+  - name: int_team_projection_strength
+    description: Five-match shrinkage to league scoring/conceding rates; venue-dependent Poisson baseline.
+    columns:
+      - name: team_id
+        data_tests: [unique, not_null]
+  - name: mart_player_fixture_projection
+    description: Experimental fixture points, minutes, components and override inputs. Not calibrated expected returns.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: {combination_of_columns: [player_id, fixture_id]}
+    columns:
+      - name: expected_points
+        data_tests: [not_null]
+      - name: expected_minutes
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments: {expression: 'between 0 and 90'}
+  - name: mart_player_gameweek_projection
+    description: Player × actionable gameweek; double fixtures summed and assigned blanks explicit. Unknown events excluded.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: {combination_of_columns: [player_id, gameweek]}
+    columns:
+      - name: expected_points
+        data_tests: [not_null]
+      - name: player_id
+        data_tests: [not_null]

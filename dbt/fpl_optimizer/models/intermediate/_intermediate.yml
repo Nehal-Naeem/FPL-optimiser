@@ -1,0 +1,25 @@
+version: 2
+models:
+  - name: int_team_fixtures
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: {combination_of_columns: [team_id, id]}
+  - name: int_player_outlook
+    columns:
+      - name: id
+        data_tests: [not_null, unique]
+  - name: int_player_gameweek_history
+    description: Player × completed gameweek scaffold; unknown historical club membership is explicit.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: {combination_of_columns: [season, player_id, gameweek]}
+  - name: int_player_recent_form
+    description: Last five and three completed gameweeks at each cutoff; past cutoffs use latest corrected history.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments: {combination_of_columns: [season, player_id, cutoff_gameweek]}
+    columns:
+      - name: window_gameweeks
+        data_tests:
+          - dbt_utils.expression_is_true:
+              arguments: {expression: 'between 1 and 5'}

@@ -69,3 +69,83 @@ calculation uses one snapshot and rejects a mismatched client version with HTTP
 identify their respective versions, not an atomic pipeline-wide snapshot.
 Scores older than twelve hours are marked stale. A failed cache refresh returns
 503 rather than silently falling back to old data.
+
+## Published snapshot migration
+
+The historical pipeline and projection models are deployed in production. The
+public service enables published snapshot mode explicitly; the backend default
+remains legacy for compatibility with other environments.
+After completing [the pipeline rollout](../fpl-refresh/README.md), set
+`FPL_USE_PUBLISHED_SNAPSHOT=true`. Grant the runtime Job User and table-level Data
+Viewer on `fpl_analytics.mart_recommendation_snapshot`; it then needs no raw read
+grants. Published mode uses one query/snapshot, includes nullable recent context,
+component contributions and both scoring/display fixtures, and never silently
+falls back if the published table is absent. API version conflicts remain 409.
+
+Metadata adds `published`, `season` and `last_checked_at`. Freshness in published
+mode uses successful collection checks, while `scores_updated_at` retains the
+score calculation time. The UI distinguishes those timestamps, explains
+incomplete historical coverage, and shows descriptive low-minutes/budget/club
+exposure notes. Legacy-mode expected-point, starting-XI and captaincy limitations
+remain. The production service is `fpl-web` in `us-central1`.
+
+## Run with real history locally, without changing scheduled production
+
+A prepared Python 3.12 dbt environment can run:
+
+```sh
+python scripts/local_refresh.py
+cd frontend
+npm run build
+cd ..
+bash scripts/serve_local.sh
+```
+
+The refresh uses ADC and creates `fpl_raw_localtest`, `fpl_build_localtest`, and
+`fpl_analytics_localtest` in the existing project. It copies only the production
+catalog schemas, fetches live FPL data, runs the same ingestion and candidate
+publication code, and saves artifacts under `logs/local-refresh/<run UUID>/`.
+Local stage claims are permitted only when all three datasets end in `_localtest`.
+The local refresh command does not alter production Scheduler, Cloud Run, IAM,
+raw tables or serving data.
+
+The first refresh requests every current player; subsequent runs use checkpoints.
+On failure the isolated lock is retained: inspect the run log and labelled
+BigQuery jobs before recovery. A successful refresh releases the lock. Test
+catalog/build tables have seven-day default expiration; canonical history/control
+and published/archived tables explicitly retain their data for repeat testing.
+
+The server exposes the built React frontend at `http://127.0.0.1:8000`, the API at
+`/api`, and API docs at `/docs`. It uses the validated test snapshot with published
+mode enabled. `PYTHON` can override the server's default `.venv-web/bin/python`;
+`PORT` can select another local port. Production is deployed separately as `fpl-web`.
+
+If a local dbt build fails after ingestion, fix the reported SQL/test failure and
+resume that same isolated run without fetching histories again:
+
+```sh
+python scripts/local_refresh.py --resume RUN_UUID
+```
+
+Resume verifies global ownership, checks there are no pending/running BigQuery
+jobs with that run label, verifies the raw manifest, and resets only the failed
+unpublished build claim. It refuses to resume an already published run.
+
+
+### Optional points planning
+
+After the new projection models pass and publish, the same reader exposes the
+experimental five-GW mode. No API endpoint or infrastructure is added. Choose the
+points objective in the existing optimizer. See [methodology](../../docs/POINTS_PLANNER.md).
+The local server at port 8000 serves the built UI and the validated `_localtest`
+snapshot, including projection components and request-only minutes overrides.
+
+## Reproducible private-first deployment
+
+`bash deploy/frontend/deploy.sh` builds through Cloud Build from an allowlisted
+context, tags the image by UTC deployment time, and deploys with authentication
+required. It selects the validated **production** serving snapshot explicitly,
+with zero minimum instances and at most three instances. Create the web identity
+and grant table-level read access after the first production publication exists.
+Only grant `allUsers` Cloud Run Invoker after private API and UI checks pass.
+The script does not start a local server or change the scheduler.
