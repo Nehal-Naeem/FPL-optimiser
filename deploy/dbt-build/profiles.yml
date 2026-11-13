@@ -1,0 +1,12 @@
+fpl_optimizer:
+  target: cloud_run
+  outputs:
+    cloud_run:
+      type: bigquery
+      method: oauth
+      project: "{{ env_var('GOOGLE_CLOUD_PROJECT', 'fpl-optimizer-511321') }}"
+      dataset: "{{ env_var('DBT_DATASET', 'fpl_analytics') }}"
+      location: "{{ env_var('BIGQUERY_LOCATION', 'US') }}"
+      threads: 4
+      job_execution_timeout_seconds: 900
+      job_retries: 0

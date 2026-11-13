@@ -12,8 +12,11 @@ and `fixtures` from the public FPL API. See the
 [ingestion deployment README](../../deploy/bigquery-ingestion/README.md) for
 setup and execution commands.
 
-The Cloud Run job runs only `scripts/bigquery_ingestion.py`. It does not execute
-dbt. Run transformations separately after ingestion.
+The ingestion Cloud Run job runs only `scripts/bigquery_ingestion.py`. A separate
+[`fpl-dbt-build` job](../../deploy/dbt-build/README.md) runs the selected dbt build
+and writes transformed models to `fpl_analytics`. The scheduled or manually triggered
+[`fpl-refresh` workflow](../../deploy/fpl-refresh/README.md) chains both jobs,
+waiting for successful ingestion before starting dbt.
 The local DuckDB pipeline is separate; these BigQuery models do not update
 `data/fpl.duckdb`.
 

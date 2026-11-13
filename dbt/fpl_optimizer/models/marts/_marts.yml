@@ -1,0 +1,22 @@
+version: 2
+
+models:
+  - name: mart_player_eval
+    description: Position-relative player viability scores used by the frontend.
+    columns:
+      - name: id
+        data_tests:
+          - unique
+          - not_null
+      - name: cost
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "> 0"
+      - name: viability_score
+        data_tests:
+          - not_null
+          - dbt_utils.expression_is_true:
+              arguments:
+                expression: "between 0 and 1"

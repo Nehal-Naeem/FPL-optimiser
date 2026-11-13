@@ -20,8 +20,11 @@ it, Cloud Run executes it, and Cloud Logging captures its output.
 - Required project IAM grants: `roles/bigquery.jobUser` and
   `roles/bigquery.dataEditor`.
 
-The job runs manually and executes ingestion only. Run dbt separately after
-ingestion to refresh transformation models.
+The job executes ingestion only. Run it manually or use the
+[`fpl-refresh` workflow](../fpl-refresh/README.md), which waits for ingestion to
+succeed before executing the separate [`fpl-dbt-build` job](../dbt-build/README.md).
+The existing Cloud Scheduler job now targets that workflow every six hours in
+`America/Vancouver`, so scheduled refreshes include both ingestion and dbt.
 
 To refresh the deployed job's data again, without rebuilding:
 

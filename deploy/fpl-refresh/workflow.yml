@@ -1,0 +1,20 @@
+main:
+  steps:
+    - ingest:
+        call: googleapis.run.v2.projects.locations.jobs.run
+        args:
+          name: ${"projects/" + sys.get_env("GOOGLE_CLOUD_PROJECT_ID") + "/locations/" + sys.get_env("JOB_REGION") + "/jobs/" + sys.get_env("INGESTION_JOB")}
+          connector_params:
+            timeout: 900
+        result: ingestion
+    - build:
+        call: googleapis.run.v2.projects.locations.jobs.run
+        args:
+          name: ${"projects/" + sys.get_env("GOOGLE_CLOUD_PROJECT_ID") + "/locations/" + sys.get_env("JOB_REGION") + "/jobs/" + sys.get_env("DBT_JOB")}
+          connector_params:
+            timeout: 1500
+        result: dbt
+    - complete:
+        return:
+          ingestion_execution: ${ingestion.response.name}
+          dbt_execution: ${dbt.response.name}
