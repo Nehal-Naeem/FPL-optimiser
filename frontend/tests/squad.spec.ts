@@ -351,6 +351,14 @@ test('points mode plans weekly XIs, captaincy, cover and explicit minutes', asyn
   await expect(planner).toBeVisible();
   await expect(planner.locator('.weekly-xi .weekly-player')).toHaveCount(11);
   await expect(planner.locator('.five-week-table tbody tr')).toHaveCount(15);
+  // A hidden grid overflow can clip controls/results without widening the page.
+  const panelsFit = await page.locator('.optimizer-controls,.optimizer-output').evaluateAll(elements =>
+    elements.every(element => {
+      const bounds = element.getBoundingClientRect();
+      const parent = element.parentElement!.getBoundingClientRect();
+      return bounds.left >= parent.left && bounds.right <= parent.right;
+    }));
+  expect(panelsFit).toBe(true);
   await expect(planner).toContainText('Captain (C)');
   await expect(planner).toContainText('Vice-captain (VC)');
   await expect(planner).toContainText('Bench 3');

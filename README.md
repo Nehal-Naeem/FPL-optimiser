@@ -160,7 +160,7 @@ team changes and finished/changed fixtures, with daily recent-two-completed-GW
 checks and weekly full reconciliation. Requests use bounded concurrency/retries;
 BigQuery merges use `(season, player_id, fixture_id)` to apply corrections without
 duplicating records. Unchanged runs can update the collection heartbeat without
-rebuilding rankings; expired projection horizons force a rebuild.
+rebuilding projections; expired projection horizons force a rebuild.
 
 The points-only reader queries `fpl_analytics.mart_recommendation_snapshot` exclusively.
 Its identity has BigQuery Job User and table-level read access, without raw/build
@@ -184,7 +184,7 @@ never reads the legacy evaluation mart or exposes retired score fields.
 | `GET /api/players` | Versioned catalog, historical context and projection data; checks data access |
 | `GET /api/teams/{team_id}` | Import a public published squad with estimated selling prices |
 | `POST /api/replacements` | Independent points upgrades and budget-saving swaps |
-| `POST /api/optimize` | Ideal/transfer optimisation with the selected objective |
+| `POST /api/optimize` | Ideal/transfer optimisation using five-week XI/captain points |
 
 POST requests include `contract_version: 2` and the current `dataset_version`.
 Replacement and optimisation requests both support `minutes_overrides`.
@@ -252,8 +252,9 @@ cloud executions or the entire application test suite.
 
 Deployments are explicit operator actions. Use the existing workflow for cloud
 refreshes rather than executing its ingestion/dbt jobs independently. Web builds
-use an allowlisted context, immutable image tags and private-first smoke tests
-before public access is granted.
+use an allowlisted context and immutable image tags. New services are private
+first; tagged previews on an existing public service inherit its public access.
+Test candidates before promoting main traffic.
 
 - [Ingestion setup and deployment](deploy/bigquery-ingestion/README.md)
 - [dbt build and publication](deploy/dbt-build/README.md)
@@ -261,7 +262,7 @@ before public access is granted.
 - [Web deployment and local configuration](deploy/frontend/README.md)
 - [Models and data-quality semantics](dbt/fpl_optimizer/README.md)
 - [Points methodology and evaluation](docs/POINTS_PLANNER.md)
-- [Dated production verification and recovery assets](deploy/fpl-refresh/PRODUCTION_VALIDATION.md)
+- [Points-only rollout and recovery assets](deploy/fpl-refresh/POINTS_ONLY_VALIDATION.md)
 
 Retired warehouse tables and historical archives are preserved for rollback; active
 dbt builds no longer calculate or publish legacy scores.
