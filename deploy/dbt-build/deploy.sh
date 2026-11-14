@@ -28,6 +28,8 @@ for source in pipeline.py history_ingestion.py dbt_publish.py; do
 done
 mkdir "$BUILD_DIR/project"
 for item in dbt_project.yml packages.yml package-lock.yml models macros seeds tests analyses; do
+    # Git does not retain empty optional directories after retiring analyses.
+    [[ "$item" != analyses || -d "${DEPLOY_DIR}/../../dbt/fpl_optimizer/analyses" ]] || continue
     cp -R "${DEPLOY_DIR}/../../dbt/fpl_optimizer/${item}" "$BUILD_DIR/project/"
 done
 
