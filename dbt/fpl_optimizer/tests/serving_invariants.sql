@@ -11,6 +11,6 @@ WHERE ARRAY_LENGTH(upcoming_fixtures)>5 OR
  ARRAY_LENGTH(upcoming_fixtures)!=(SELECT COUNT(DISTINCT fixture.id) FROM UNNEST(s.upcoming_fixtures) fixture)
  OR TO_JSON_STRING(ARRAY(SELECT fixture.id FROM UNNEST(s.upcoming_fixtures) fixture)) != COALESCE(f.fixture_ids,'[]')
 UNION ALL
-SELECT 'null_score_with_coverage' FROM {{ ref('mart_recommendation_snapshot') }} s
-LEFT JOIN {{ ref('mart_player_eval') }} e ON e.id=s.id
-WHERE s.score IS NULL AND e.viability_score IS NOT NULL
+SELECT 'contract_or_mapping' FROM {{ ref('mart_recommendation_snapshot') }} s
+LEFT JOIN {{ ref('stg_players') }} p ON p.id=s.id
+WHERE s.contract_version!=2 OR s.team_id!=p.team OR s.position!=p.element_type OR s.projections_updated_at IS NULL

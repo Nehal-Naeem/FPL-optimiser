@@ -25,7 +25,7 @@ def project(player,points=(4,4,4,4,4),probability=1):
 
 
 def request(**kwargs):
-    return OptimizeRequest(mode='ideal',objective='five_gw_points',budget=1000,dataset_version='test',**kwargs)
+    return OptimizeRequest(contract_version=2,mode='ideal',objective='five_gw_points',budget=1000,dataset_version='test',**kwargs)
 
 
 def test_captaincy_xis_baseline_and_budget(players,squad):
@@ -125,7 +125,7 @@ def test_unavailable_new_players_require_explicit_return_assumptions(players):
 def test_transfers_use_sale_prices_and_cap(players,squad):
     pool={i:project(p,(1,)*5) for i,p in players.items()}
     pool[16]=project(players[3].model_copy(update={'id':16,'team_id':7,'price':55}),(8,)*5)
-    req=OptimizeRequest(mode='transfers',objective='five_gw_points',squad=squad,bank=5,max_transfers=1,dataset_version='test')
+    req=OptimizeRequest(contract_version=2,mode='transfers',objective='five_gw_points',squad=squad,bank=5,max_transfers=1,dataset_version='test')
     result=optimize(req,pool)
     assert result['transfers']==1 and result['remaining_budget']==0 and result['sale_proceeds']==50
     req=req.model_copy(update={'max_transfers':0})
@@ -133,7 +133,7 @@ def test_transfers_use_sale_prices_and_cap(players,squad):
 
 
 def test_missing_projection_bad_override_expired_and_timeout(players):
-    with pytest.raises(DomainError,match='unavailable'):optimize(request(),players)
+    with pytest.raises(DomainError,match='unavailable'):optimize(request(),{i:p.model_copy(update={'projections':()}) for i,p in players.items()})
     pool={i:project(p) for i,p in players.items()}
     bad=request(minutes_overrides=[MinutesOverride(player_id=99,gameweek=11,minutes_per_fixture=90)])
     with pytest.raises(DomainError,match='unique'):optimize(bad,pool)
@@ -150,7 +150,7 @@ def test_api_points_serialization_version_and_override_isolation(dataset,players
     app.dependency_overrides[get_dataset]=lambda:projected
     try:
         with TestClient(app) as client:
-            payload={'dataset_version':projected.version,'mode':'ideal','objective':'five_gw_points',
+            payload={'contract_version':2,'dataset_version':projected.version,'mode':'ideal','objective':'five_gw_points',
                      'budget':1000,'minutes_overrides':[{'player_id':1,'gameweek':11,'minutes_per_fixture':0}]}
             result=client.post('/api/optimize',json=payload)
             assert result.status_code==200,result.text

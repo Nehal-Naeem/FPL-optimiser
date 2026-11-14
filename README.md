@@ -1,8 +1,7 @@
 # FPL Optimiser · Touchline
 
 A Fantasy Premier League recommendation app for comparing players, finding
-cheaper replacements, and building a legal squad around either relative viability
-or experimental points projections.
+affordable replacements, and building a legal squad around experimental five-gameweek points projections.
 
 **[Open the public app](https://fpl-web-381011398272.us-central1.run.app)**
 
@@ -10,10 +9,10 @@ or experimental points projections.
 
 - Imports a public FPL team's latest published gameweek squad.
 - Lets you correct the squad, bank and selling prices before analysis.
-- Finds cheaper same-position replacements with higher viability.
+- Finds same-position points upgrades and budget-saving replacements, including bank-funded moves.
 - Builds an ideal 15-player squad or improves an imported squad within an immediate
   transfer limit.
-- Shows availability news, upcoming fixtures, viability components and recent
+- Shows availability news, upcoming fixtures, points components and recent
   completed-gameweek points, minutes, starts and xG/xA rates when available.
 - Offers a five-gameweek points plan with weekly starting XIs, captains,
   vice-captains, bench order, rotation and current-squad comparisons.
@@ -27,58 +26,44 @@ reloading the page resets them. The app never makes transfers in FPL.
 
 ## How recommendations work
 
-### Relative viability
+### Points-only selection
 
-The current score is:
+All recommendation features use the existing experimental points model. There is
+no viability score, percentile ranking, score-based eligibility or legacy objective.
+Historical measurements remain available as context.
 
-```text
-viability = 0.30 × form percentile
-          + 0.45 × normalised fixture ease
-          + 0.25 × season points-per-gameweek percentile
-```
+The optimiser chooses one legal 15-player squad and five weekly XIs/captains.
+It maximises XI points plus one captain bonus per week, then formation-aware
+reserve cover, fewer transfers and lower expenditure. Both ideal-squad and
+improve-my-squad modes use this objective. Constraints remain 2 GK / 5 DEF / 5 MID /
+3 FWD, maximum three per club, unique players, budget and the immediate transfer cap.
+Ideal mode defaults to £100m. Transfer mode uses the bank and entered selling prices.
+Money is represented as integer tenths of a million.
 
-Form and points/GW use `CUME_DIST()` within each position among eligible players.
-Eligibility requires more than 60 season minutes. Season points/GW divides total
-points by the number of finished gameweeks.
+The solver has a ten-second total budget. `OPTIMAL` proves the integer primary
+objective; `FEASIBLE` is a legal result without a proof of optimality. Secondary
+tie-breaks run only after the preceding objective is proved optimal, and unfinished
+tie-breaks are flagged. Objective comparisons round each player's GW points to
+0.001, while the published projection components retain their original precision.
 
-Fixture ease is a weighted average over the scoring model's next five unfinished
-matches: ease is `6 − difficulty`, weights decrease from 5 to 1, and the average
-is normalised with `(average − 1) / 4`. The legacy scoring fixture set can differ
-from the displayed next five **unstarted** fixtures; player details disclose that
-when it occurs. Five fixtures are not necessarily five gameweeks.
+### Individual replacements
 
-Viability is a relative heuristic, not expected FPL points. Position-relative
-percentiles are not calibrated across positions. Recent historical features add
-context but do not change this formula.
+For every affordable, same-position, non-owned player that preserves club limits,
+the engine recalculates the fixed squad's best weekly XIs and captains. Affordability
+is outgoing selling price plus bank. It evaluates all eligible candidates before
+returning up to five candidates in each group:
 
-### Cheaper-player suggestions
+- **Points improvements:** positive five-week XI-plus-captain gain, ranked by gain,
+  tested coverage, savings and player ID. A cheaper player or a bank-funded upgrade
+  can qualify; individual five-week points alone do not determine squad benefit.
+- **Budget savings:** a strictly cheaper swap with no loss in any weekly XI/captain
+  total or the tested single/double-absence coverage counts. Ranked by savings,
+  coverage and player ID.
 
-Each candidate must have the same position, a strictly lower purchase price than
-the outgoing player's selling price, and strictly higher viability. Already-owned
-players and swaps that exceed three players from a club are excluded. Suggestions
-are ordered by viability gain, then savings, then player ID.
-
-Each suggestion is an independent legal swap, rather than a jointly optimised
-transfer sequence. Applying a swap changes only the local squad/bank and recalculates
-suggestions. Players without a viability score have no replacement comparison.
-
-### Squad optimisation
-
-Both objectives use OR-Tools CP-SAT and enforce 15 unique players, 2 GK / 5 DEF /
-5 MID / 3 FWD, at most three per club, and the available budget. Ideal mode defaults
-to £100m. Transfer mode uses the bank, entered selling prices and an immediate
-transfer cap. Money is represented as integer tenths of a million.
-
-| Objective | What it maximises | Reserve and availability handling |
-| --- | --- | --- |
-| **Total squad viability** — default | Sum of all 15 viability scores; ties favour fewer transfers, then lower spend | Bench players count equally. Flagged scored players remain eligible. Unscored owned players stay fixed in transfer mode. |
-| **Five-gameweek points plan** — experimental | Sum of each week's legal XI points plus one extra copy of captain points | Bench cover is secondary; viability is a later tie-break, followed by fewer moves/lower spend. Availability and observed minutes affect selection. |
-
-Both modes have a ten-second solver budget. `OPTIMAL` proves the integer primary
-objective; `FEASIBLE` means a legal result was found without proving optimality.
-Points mode runs secondary objectives only after preceding objectives are proved
-optimal and flags unfinished tie-breaks. It does not numerically blend viability
-and projected points.
+Results show weekly impact, planned starts, coverage changes and savings/bank used.
+Applying a suggestion changes only your local squad/bank and recalculates analysis.
+Each suggestion is independent; gains from several suggestions cannot be added.
+Baseline and candidates use the same horizon and minutes assumptions.
 
 ### Experimental points and five-week cover
 
@@ -91,8 +76,10 @@ Opponent scoring/conceding rates and venue adjust fixture estimates.
 The horizon is the next five actionable **gameweek deadlines**, with fewer near
 season end. Double fixtures are summed; assigned blanks score zero; unassigned
 fixtures are flagged and excluded. A passed first deadline blocks planning until
-refresh. Players marked injured, suspended, unavailable or 0% require explicit minutes
-assumptions for every assigned week before they can be selected. Later
+refresh. New players marked injured, suspended, unavailable or 0% require explicit minutes
+assumptions for every assigned week. Owned unavailable players can remain with zero
+assumed minutes in unresolved weeks; explicit overrides take precedence and the
+conservative assumption is labelled. Later
 recovery dates are not inferred.
 
 Minutes overrides are deterministic 0–90 minutes **per fixture**, including each
@@ -151,7 +138,7 @@ flowchart TD
 | --- | --- | --- |
 | API inputs, fixture history, checkpoints, manifests and lock | `fpl_raw` | `fpl_raw_localtest` |
 | Candidate dbt models and validation | `fpl_build` | `fpl_build_localtest` |
-| Serving snapshot, compatibility mart and versioned archives | `fpl_analytics` | `fpl_analytics_localtest` |
+| Serving snapshot and versioned projection archives | `fpl_analytics` | `fpl_analytics_localtest` |
 
 The development datasets are actively used, not disposable production duplicates.
 The unrelated sample dataset `fpl_analytics_raw` was removed and sample seeds are
@@ -175,19 +162,19 @@ BigQuery merges use `(season, player_id, fixture_id)` to apply corrections witho
 duplicating records. Unchanged runs can update the collection heartbeat without
 rebuilding rankings; expired projection horizons force a rebuild.
 
-The public `fpl-web` service enables `FPL_USE_PUBLISHED_SNAPSHOT=true` and reads
-`fpl_analytics.mart_recommendation_snapshot`. Its identity has BigQuery Job User
-and table-level read access, without raw/build dataset grants. It serves the UI
-and API on one origin, caches the dataset for five minutes per process and gzip
-compresses responses. Calculations pin the dataset version; stale client versions
-receive HTTP 409. Backend cache-refresh failures return an error; pipeline
-failures leave the last validated publication in place. Successful collection
-checks determine the freshness indicator.
+The points-only reader queries `fpl_analytics.mart_recommendation_snapshot` exclusively.
+Its identity has BigQuery Job User and table-level read access, without raw/build
+dataset grants. It serves UI/API on one origin, caches the dataset for five minutes
+per process and gzip compresses responses. API contract version 2 uses a versioned
+dataset token; missing/obsolete request contracts and stale dataset versions receive
+HTTP 409 with a reload instruction. Backend cache-refresh failures return an error;
+pipeline failures leave the last validated publication in place.
 
 Cloud Run is configured for 1 CPU, 1 GiB, concurrency 4, zero minimum instances,
-three maximum instances and a 120-second request timeout. The code's default
-reader remains legacy for compatibility; deployments must explicitly select the
-published reader to expose history and projections.
+three maximum instances and a 120-second request timeout. The points-only reader
+can temporarily read the old snapshot timestamp during coordinated migration; it
+never reads the legacy evaluation mart or exposes retired score fields.
+
 
 ## API
 
@@ -196,8 +183,11 @@ published reader to expose history and projections.
 | `GET /api/health` | Process health; does not check BigQuery |
 | `GET /api/players` | Versioned catalog, historical context and projection data; checks data access |
 | `GET /api/teams/{team_id}` | Import a public published squad with estimated selling prices |
-| `POST /api/replacements` | Independent cheaper/higher-viability swaps |
+| `POST /api/replacements` | Independent points upgrades and budget-saving swaps |
 | `POST /api/optimize` | Ideal/transfer optimisation with the selected objective |
+
+POST requests include `contract_version: 2` and the current `dataset_version`.
+Replacement and optimisation requests both support `minutes_overrides`.
 
 FastAPI's interactive contract is available at `/docs`. Credentials stay on the
 backend; browser requests never access BigQuery directly.
@@ -272,6 +262,9 @@ before public access is granted.
 - [Models and data-quality semantics](dbt/fpl_optimizer/README.md)
 - [Points methodology and evaluation](docs/POINTS_PLANNER.md)
 - [Dated production verification and recovery assets](deploy/fpl-refresh/PRODUCTION_VALIDATION.md)
+
+Retired warehouse tables and historical archives are preserved for rollback; active
+dbt builds no longer calculate or publish legacy scores.
 
 Keep this README current in the same change whenever functionality,
 infrastructure, configuration or recommendation logic changes. Document verified

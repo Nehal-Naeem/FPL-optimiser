@@ -4,10 +4,6 @@ models:
     data_tests:
       - dbt_utils.unique_combination_of_columns:
           arguments: {combination_of_columns: [team_id, id]}
-  - name: int_player_outlook
-    columns:
-      - name: id
-        data_tests: [not_null, unique]
   - name: int_player_gameweek_history
     description: Player × completed gameweek scaffold; unknown historical club membership is explicit.
     data_tests:

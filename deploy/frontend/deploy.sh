@@ -26,9 +26,13 @@ if [[ "${BUILD_ONLY:-false}" == true ]]; then
   printf 'Built image: %s\n' "$IMAGE"
   exit 0
 fi
+ACCESS_ARGS=(--no-allow-unauthenticated)
+if [[ -n "${PREVIEW_TAG:-}" ]]; then
+  ACCESS_ARGS=(--no-traffic --tag="$PREVIEW_TAG")
+fi
 gcloud run deploy fpl-web --project="$PROJECT_ID" --region="$REGION" --image="$IMAGE" \
   --service-account="$SERVICE_ACCOUNT" \
-  --set-env-vars="GOOGLE_CLOUD_PROJECT=${PROJECT_ID},BIGQUERY_LOCATION=US,FPL_RAW_DATASET=fpl_raw,FPL_ANALYTICS_DATASET=fpl_analytics,FPL_USE_PUBLISHED_SNAPSHOT=true" \
+  --set-env-vars="GOOGLE_CLOUD_PROJECT=${PROJECT_ID},BIGQUERY_LOCATION=US,FPL_RAW_DATASET=fpl_raw,FPL_ANALYTICS_DATASET=fpl_analytics" \
   --cpu=1 --memory=1Gi --concurrency=4 --min-instances=0 --max-instances=3 --timeout=120 \
-  --no-allow-unauthenticated --quiet
-printf 'Private deployment image: %s\n' "$IMAGE"
+  "${ACCESS_ARGS[@]}" --quiet
+printf 'Deployment image: %s\n' "$IMAGE"

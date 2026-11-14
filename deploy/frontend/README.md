@@ -8,7 +8,8 @@ commands are run automatically. Run from the repository root.
 
 Create a dedicated runtime service account `fpl-web` in project
 `fpl-optimizer-511321`. Grant it `roles/bigquery.jobUser` at project level and
-`roles/bigquery.dataViewer` on **only** the `fpl_raw` and `fpl_analytics` datasets.
+`roles/bigquery.dataViewer` on **only**
+`fpl_analytics.mart_recommendation_snapshot`.
 The service does not write player data or need ingestion/deployment permissions.
 Use the attached service-account identity, not a downloaded key. The deployer
 needs permission to act as that identity and deploy Cloud Run services.
@@ -21,8 +22,8 @@ gcloud projects add-iam-policy-binding fpl-optimizer-511321 \
   --role=roles/bigquery.jobUser
 ```
 
-Grant the two dataset-scoped Data Viewer roles through each dataset's Sharing →
-Permissions panel before deploying. Do not replace existing dataset access policies.
+Grant table-level Data Viewer on the serving snapshot before deploying; no raw or
+build dataset grant is required. Do not replace existing access policies.
 
 ## Build and deploy
 
@@ -67,27 +68,23 @@ The backend caches a read-only dataset for five minutes per process. Each
 calculation uses one snapshot and rejects a mismatched client version with HTTP
 409. Raw ingestion and mart publication are still separate writes; timestamps
 identify their respective versions, not an atomic pipeline-wide snapshot.
-Scores older than twelve hours are marked stale. A failed cache refresh returns
+Collection checks older than twelve hours are marked stale. A failed cache refresh returns
 503 rather than silently falling back to old data.
 
-## Published snapshot migration
+## Points-only serving
 
-The historical pipeline and projection models are deployed in production. The
-public service enables published snapshot mode explicitly; the backend default
-remains legacy for compatibility with other environments.
-After completing [the pipeline rollout](../fpl-refresh/README.md), set
-`FPL_USE_PUBLISHED_SNAPSHOT=true`. Grant the runtime Job User and table-level Data
-Viewer on `fpl_analytics.mart_recommendation_snapshot`; it then needs no raw read
-grants. Published mode uses one query/snapshot, includes nullable recent context,
-component contributions and both scoring/display fixtures, and never silently
-falls back if the published table is absent. API version conflicts remain 409.
+The backend always reads the validated `mart_recommendation_snapshot`, with
+project Job User and table-level Data Viewer. It has no legacy raw/mart reader.
+API contract 2 includes `contract_version: 2` on POST requests and prefixes dataset
+versions with `points-v2:`. Old requests receive HTTP 409 with a page-reload message.
+During rollout the reader accepts the previous timestamp name; new snapshots use
+`projections_updated_at` and have no retired score fields.
 
-Metadata adds `published`, `season` and `last_checked_at`. Freshness in published
-mode uses successful collection checks, while `scores_updated_at` retains the
-score calculation time. The UI distinguishes those timestamps, explains
-incomplete historical coverage, and shows descriptive low-minutes/budget/club
-exposure notes. Legacy-mode expected-point, starting-XI and captaincy limitations
-remain. The production service is `fpl-web` in `us-central1`.
+For existing public services, set `PREVIEW_TAG=points-v2` when using `deploy.sh`
+to stage a candidate revision without changing main traffic or service IAM.
+Tagged URLs inherit the existing service's access policy; they are not private.
+Smoke-test the tagged URL, then explicitly promote its revision. New-service
+private-first deployment remains the default when no preview tag is supplied.
 
 ## Run with real history locally, without changing scheduled production
 

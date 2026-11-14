@@ -4,15 +4,9 @@ export type UpcomingFixture = {
 };
 export type Player = {
   id: number; name: string; team_id: number; club: string; position: number; price: number;
-  score: number | null; form: number | null; form_percentile: number | null;
-  fixture_ease: number | null; normalized_fixture_ease: number | null;
-  points_per_gw: number | null; points_percentile: number | null;
   status: string; news: string; chance_of_playing: number | null;
   upcoming_fixtures: UpcomingFixture[];
-  scoring_fixtures?: UpcomingFixture[];
   recent?: RecentForm | null;
-  form_contribution?: number | null; fixture_contribution?: number | null; points_contribution?: number | null;
-  scoring_method?: string;
   projections?: GameweekProjection[];
 };
 export type RecentForm = {
@@ -25,7 +19,7 @@ export type RecentForm = {
 };
 export type Pick = { player_id: number; selling_price: number; estimated: boolean };
 export type Metadata = {
-  dataset_version: string; scores_updated_at: string; catalog_updated_at: string; stale: boolean;
+  contract_version: number; dataset_version: string; projections_updated_at: string; catalog_updated_at: string; stale: boolean;
   fixtures_updated_at: string | null;
   projection_gameweeks?: number[]; projection_method?: string | null; projection_stale?: boolean;
   last_checked_at?: string | null; season?: string | null; published?: boolean;
@@ -34,15 +28,17 @@ export type Catalog = Metadata & { players: Player[] };
 export type Imported = Metadata & {
   team_id: number; name: string; source_gameweek: number; bank: number; squad: Pick[]; notice: string;
 };
-export type Alternative = { player: Player; viability_gain: number; savings: number };
-export type Replacement = { player_id: number; unscored: boolean; candidates: Alternative[] };
+export type Alternative = { player: Player; projected_gain: number; projected_points: number; savings: number; bank_used: number;
+  price_label: string; planned_starts: number; warnings: string[];
+  weekly_deltas: {gameweek:number; projected_gain:number; single_cover_change:number; double_cover_change:number}[];
+};
+export type Replacement = { player_id: number; upgrades: Alternative[]; savings_moves: Alternative[] };
 export type Result = Metadata & {
   status: string; players: Player[]; message?: string;
   incoming: Player[]; outgoing: Player[]; transfers: number | null;
   purchase_cost: number; sale_proceeds: number; remaining_budget: number; market_value: number;
-  viability: number; baseline_viability: number | null; viability_gain: number | null;
-  fixed_unscored: number[]; estimated_selling_prices: boolean; source_gameweek: number | null;
-  objective?: 'viability' | 'five_gw_points'; weekly_plans?: WeeklyPlan[]; baseline_weekly_plans?: WeeklyPlan[];
+  estimated_selling_prices: boolean; source_gameweek: number | null;
+  objective?: 'five_gw_points'; weekly_plans?: WeeklyPlan[]; baseline_weekly_plans?: WeeklyPlan[];
   projected_points?: number; baseline_projected_points?: number | null; projected_gain?: number | null;
   planned_starts?: Record<string, number>; projection_warnings?: string[]; projection_scope?: string;
   projection_method?: string; tie_breaks_complete?: boolean;

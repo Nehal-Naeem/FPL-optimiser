@@ -1,9 +1,8 @@
 # Five-gameweek points planner
 
-`experimental-points-v1` is an optional, explainable projection layer. Legacy
-viability and its default optimiser are unchanged. It needs the validated serving
-snapshot reader (`FPL_USE_PUBLISHED_SNAPSHOT=true`); an older snapshot still serves
-legacy mode and offers no points mode until the next validated build.
+`experimental-points-v1` is the explainable projection layer used by all recommendation features.
+The backend reads a validated serving snapshot exclusively. API contract 2 is
+separate from the forecasting method version; the forecast coefficients are unchanged.
 
 ## Models and assumptions
 
@@ -40,8 +39,9 @@ legacy mode and offers no points mode until the next validated build.
 Next-round FPL availability percentages apply only to the first actionable GW.
 Later-week fitness is unconfirmed. Players currently marked injured, suspended,
 unavailable or 0% are excluded from selection unless users explicitly assume
-minutes for every assigned week. Owned excluded players must be sold within the
-immediate transfer cap, or receive assumptions. No recovery dates are invented.
+minutes for every assigned week. Owned unavailable players may remain, with zero assumed minutes in weeks without
+explicit overrides. The conservative assumption is labelled and used in both baseline
+and candidate plans; no forced sale is required. No recovery dates are invented.
 Doubtful players retain flags and the first-week adjustment.
 
 Manual minutes assumptions are deterministic 0–90 **per fixture**, not confidence
@@ -57,8 +57,7 @@ Legal formation has 1 GK, at least 3 DEF, 2 MID, 1 FWD. Squad quotas, budget and
 limits are the existing rules. Future transfers and chips are not planned.
 
 Sequential objectives preserve the best primary integer objective (points rounded
-to 0.001), then maximise a formation-aware reserve appearance proxy, then viability,
-then fewer immediate moves/lower expenditure. There is one total 10-second solver
+to 0.001), then maximise a formation-aware reserve appearance proxy, then fewer immediate moves/lower expenditure. There is one total 10-second solver
 budget. Secondary objectives run only after primary optimality is proved; incomplete
 tie-breaks are disclosed. A feasible result does not claim proven optimality.
 
@@ -71,8 +70,10 @@ confidence. The displayed vice-captain is the next strongest starting option; fa
 points are excluded. Cover is secondary to XI points; there is no hard bench spend cap.
 Weekly bench expenditure and players with no planned starts remain visible for review.
 
-Current-squad gain uses the same projections, overrides, legal-XI and captain method.
-It is unavailable when an owned unavailable player lacks explicit assumptions.
+Current-squad gain and single-swap comparisons use the same projections, overrides,
+legal-XI and captain method, including conservative zero-minute assumptions for owned
+unavailable players. Savings swaps must preserve every weekly XI/captain total and
+single/double cover count; points upgrades may have weekly losses, which are disclosed.
 
 ## Validation and forward evaluation
 
@@ -80,7 +81,7 @@ Native dbt generic/singular checks cover player/fixture and player/GW uniqueness
 probability ordering, finite component totals, minutes bounds, blanks/doubles,
 scaffold coverage and nested snapshot consistency. Python checks enumerate small
 squad/XI problems and test minutes thresholds, rotations, sale prices, transfer caps
-and substitution formation. Browser checks cover desktop/mobile planning and legacy UI.
+and substitution formation. Browser checks cover desktop/mobile planning and replacements.
 
 Each successful publication archives both projection marts and the serving snapshot
 with the immutable run UUID. The snapshot's `as_of`, method and component inputs
@@ -100,8 +101,7 @@ complete fixture outcomes. It reports points MAE/RMSE, minutes MAE, appearance B
 and a paired recent-points/GW baseline by position. Blanks, unsettled and incomplete
 rows are counted separately. Outcomes are latest **corrected** observations, not a
 historically frozen outcome feed. No prospective accuracy claim is available until
-these weeks finish. Review positional/minutes errors before changing priors or making
-this the default. New coefficients/scoring rules require a new projection method ID.
+these weeks finish. Review positional/minutes errors before changing priors or claiming calibrated predictive accuracy. New coefficients/scoring rules require a new projection method ID.
 
 Rules references: [points](https://www.premierleague.com/en/news/2174909),
 [captain/substitution rules](https://www.premierleague.com/en/news/2174899),

@@ -134,11 +134,11 @@ def candidate_graph():
         con.execute(f"ALTER TABLE raw_{raw} ADD COLUMN run_id VARCHAR DEFAULT 'local-validation'")
     for model in ['players','teams','positions','gameweeks','fixtures','player_fixture_history']:
         build(con,'stg_'+model,'staging')
-    for model in ['int_team_fixtures','int_rolling_team_fixtures','int_upcoming_team_fixtures',
-                  'int_player_outlook','int_player_gameweek_history','int_player_recent_form',
+    for model in ['int_team_fixtures','int_upcoming_team_fixtures',
+                  'int_player_gameweek_history','int_player_recent_form',
                   'int_projection_horizon','int_player_projection_rates','int_team_projection_strength']:
         build(con,model,'intermediate')
-    for model in ['mart_player_eval','mart_score_comparison','mart_player_fixture_projection',
+    for model in ['mart_player_fixture_projection',
                   'mart_player_gameweek_projection','mart_recommendation_snapshot']:
         build(con,model,'marts')
     return con
@@ -146,13 +146,11 @@ def candidate_graph():
 
 def test_full_candidate_graph_and_serving_tests():
     con = candidate_graph()
-    assert con.sql('SELECT COUNT(*) FROM mart_player_eval').fetchone()[0] == 3
     assert con.sql('SELECT COUNT(*) FROM mart_recommendation_snapshot').fetchone()[0] == 4
-    assert con.sql('SELECT score FROM mart_recommendation_snapshot WHERE id=3').fetchone()[0] is None
-    first = con.sql('SELECT upcoming_fixtures,scoring_fixtures FROM mart_recommendation_snapshot WHERE id=1').fetchone()
+    assert con.sql('SELECT contract_version FROM mart_recommendation_snapshot WHERE id=3').fetchone()[0] == 2
+    first = con.sql('SELECT upcoming_fixtures FROM mart_recommendation_snapshot WHERE id=1').fetchone()
     assert [f['id'] for f in first[0]] == [3,4,5,6,7]
-    assert 2 in [f['id'] for f in first[1]]
-    for test in ['raw_snapshot','evaluation_invariants','serving_invariants','history_reconciliation','gameweek_grain_and_totals','recent_form_reconciliation']:
+    for test in ['raw_snapshot','serving_invariants','history_reconciliation','gameweek_grain_and_totals','recent_form_reconciliation']:
         sql=sqlglot.transpile(render(ROOT/'tests'/(test+'.sql')),read='bigquery',write='duckdb')[0]
         assert con.sql(sql).fetchall() == [], test
     con.execute("UPDATE raw_players SET run_id='old' WHERE id=1")

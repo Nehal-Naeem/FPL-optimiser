@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from fastapi.testclient import TestClient
 
 from backend.app import app, get_dataset
-from backend.data import dataset_version, upcoming_by_team
+from backend.data import upcoming_by_team
 from backend.models import UpcomingFixture
 
 START = datetime(2026, 11, 14, 15, tzinfo=timezone.utc)
@@ -40,28 +40,24 @@ def test_home_away_difficulty_and_fallback_names():
     assert fixtures[11][0].opponent == "1"
 
 
-def test_fixture_refresh_changes_dataset_version():
-    assert dataset_version(START, START, START) != dataset_version(START, START, START + timedelta(seconds=1))
-
 
 def test_fixtures_survive_all_player_responses(dataset, squad):
     fixture = UpcomingFixture(id=1, opponent_id=2, opponent="Test club", opponent_short="TST",
                               home_away="A", gameweek=13, kickoff_time=START, difficulty=4)
     players = [p.model_copy(update={"upcoming_fixtures": (fixture,)}) for p in dataset.players]
-    # An unscored player remains visible and fixed in transfer mode.
-    players[0] = players[0].model_copy(update={"score": None})
-    candidate = players[2].model_copy(update={"id": 16, "team_id": 6, "price": 40, "score": 0.9})
+    from backend.tests.test_points_engine import project
+    candidate = project(players[2].model_copy(update={"id":16,"team_id":6,"price":40}),(8,)*5)
     updated = dataset.model_copy(update={"players": tuple(players + [candidate]), "fixtures_updated_at": START})
     app.dependency_overrides[get_dataset] = lambda: updated
     try:
         with TestClient(app) as client:
             catalog = client.get('/api/players').json()
             assert catalog['fixtures_updated_at'] is not None
-            assert catalog['players'][0]['score'] is None
+            assert 'score' not in catalog['players'][0]
             assert catalog['players'][0]['upcoming_fixtures'][0]['opponent_short'] == 'TST'
-            body = {"squad": [p.model_dump() for p in squad], "dataset_version": dataset.version}
+            body = {"contract_version":2,"squad": [p.model_dump() for p in squad], "dataset_version": dataset.version}
             rows = client.post('/api/replacements', json=body).json()['replacements']
-            assert rows[2]['candidates'][0]['player']['upcoming_fixtures'][0]['difficulty'] == 4
+            assert rows[2]['upgrades'][0]['player']['upcoming_fixtures'][0]['difficulty'] == 4
             result = client.post('/api/optimize', json={**body, "mode": "transfers"}).json()
             assert len(result['players']) == 15
             assert all(p['upcoming_fixtures'][0]['id'] == 1 for p in result['players'])

@@ -22,7 +22,7 @@ export function MinutesAssumptions({ players, gameweeks, overrides, onChange, di
   return <details className="minutes-assumptions">
     <summary>Playing-time assumptions {overrides.length ? `(${overrides.length})` : '(optional)'}</summary>
     <p className="fine-print">Assume minutes per assigned fixture. Zero means no appearance; 60 triggers full appearance and clean-sheet eligibility. Overrides replace playing-time uncertainty. They do not invent matches in blank weeks.</p>
-    <p className="fine-print">Currently unavailable players need explicit assumptions for every scheduled week before they can be selected. Without these, they must be sold in transfer mode.</p>
+    <p className="fine-print">Currently unavailable players need explicit assumptions for every scheduled week before they can be selected. Owned unavailable players default to zero minutes in unresolved weeks; override to assume recovery.</p>
     <label className="field">Player for minutes assumptions<select value={playerId} disabled={disabled} onChange={e => setPlayerId(e.target.value)}>
       <option value="">Choose a player</option>{[...players].sort((a,b) => a.name.localeCompare(b.name)).map(p => <option key={p.id} value={p.id}>{p.name} · {p.club}</option>)}
     </select></label>
@@ -59,7 +59,7 @@ export function FiveWeekPlan({ result }: { result: Result }) {
   }
   const baseline = result.baseline_weekly_plans?.find(w => w.gameweek === week.gameweek);
   return <section className="five-week-plan" aria-label="Five-gameweek plan">
-    <p className="projection-beta">Experimental projections · viability remains a separate ranking metric</p>
+    <p className="projection-beta">Experimental projections · XI and captain returns drive selection</p>
     <div className="result-stats">
       <span>{weeks.length}-GW XI + captain <b>{points(result.projected_points)}</b></span>
       {result.baseline_projected_points != null && <span>Current squad <b>{points(result.baseline_projected_points)}</b></span>}
@@ -67,7 +67,7 @@ export function FiveWeekPlan({ result }: { result: Result }) {
       <span>No planned starts <b>{money(idleSpend)}</b></span>
     </div>
     <p className="fine-print">{result.projection_scope} One squad, with manual lineup changes before each deadline; future transfers and chips are not planned.</p>
-    {result.tie_breaks_complete === false && <p className="diagnostic-note">The time limit stopped secondary bench/viability tie-breaks. Review reserve quality.</p>}
+    {result.tie_breaks_complete === false && <p className="diagnostic-note">The time limit stopped secondary bench/budget tie-breaks. Review reserve quality.</p>}
     {result.projection_warnings?.map(message => <p className="diagnostic-note" key={message}>{message}</p>)}
     <div className="week-selector" role="group" aria-label="Planning gameweek">{weeks.map(w => <button className="button secondary" type="button" key={w.gameweek}
       aria-pressed={w.gameweek === week.gameweek} onClick={() => setActive(w.gameweek)}>GW {w.gameweek}</button>)}</div>
@@ -81,9 +81,9 @@ export function FiveWeekPlan({ result }: { result: Result }) {
     {entry(week.bench_goalkeeper,'Backup goalkeeper')}{week.bench_order.map((id,i) => entry(id,`Bench ${i+1}`))}
     <p className="fine-print">Reliable cover: {week.covered_single_absences}/11 single-absence scenarios; {week.covered_double_absences}/{week.double_absence_scenarios} double-absence scenarios. {week.coverage_assumption}. These are stress tests, not forecast probabilities.</p>
     <h4>Five-week rotation</h4>
-    <div className="five-week-scroll"><table className="five-week-table"><thead><tr><th>Player</th><th>Viability</th>{weeks.map(w => <th key={w.gameweek}>GW {w.gameweek}</th>)}<th>Starts</th></tr></thead>
+    <div className="five-week-scroll"><table className="five-week-table"><thead><tr><th>Player</th>{weeks.map(w => <th key={w.gameweek}>GW {w.gameweek}</th>)}<th>Starts</th></tr></thead>
       <tbody>{result.players.map(p => <tr key={p.id}><th><PlayerDetails player={p} /><small>{money(p.price)} · {names[p.position]}</small></th>
-        <td>{p.score == null ? '—' : p.score.toFixed(3)}</td>{weeks.map(w => {
+        {weeks.map(w => {
           const pr = projection(p,w.gameweek);
           const role = w.captain === p.id ? 'XI · C' : w.vice_captain === p.id ? 'XI · VC' : w.starting_xi.includes(p.id) ? 'XI' : w.bench_goalkeeper === p.id ? 'GK cover' : `Bench ${w.bench_order.indexOf(p.id)+1}`;
           return <td key={w.gameweek} className={w.starting_xi.includes(p.id) ? 'planned-xi' : 'planned-bench'}>

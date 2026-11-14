@@ -1,6 +1,5 @@
 """Lazy cloud access, five-minute snapshot cache, and public FPL imports."""
 
-import hashlib
 import logging
 import math
 import os
@@ -51,18 +50,11 @@ def upcoming_by_team(rows):
             for team, fixtures in grouped.items()}
 
 
-def dataset_version(scores_time, catalog_time, fixtures_time):
-    return hashlib.sha256("|".join(t.isoformat() for t in (scores_time, catalog_time, fixtures_time)).encode()).hexdigest()[:20]
-
-
 class BigQueryRepository:
     def __init__(self):
         self.project = identifier(os.getenv("GOOGLE_CLOUD_PROJECT", "fpl-optimizer-511321"))
         self.raw = identifier(os.getenv("FPL_RAW_DATASET", "fpl_raw"))
         self.analytics = identifier(os.getenv("FPL_ANALYTICS_DATASET", "fpl_analytics"))
-        # Explicit migration switch: enable only after the first validated publication.
-        # Published mode never silently falls back to mixed raw/mart reads.
-        self.published = os.getenv("FPL_USE_PUBLISHED_SNAPSHOT", "false").lower() == "true"
         self.client = None
         self._snapshot = None
         self._expires = 0.0
@@ -89,73 +81,22 @@ class BigQueryRepository:
     def _load(self) -> Dataset:
         if self.client is None:
             self.client = bigquery.Client(project=self.project)
-        if self.published:
-            return self._load_published()
-        # Only validated configuration identifiers are interpolated. No user input enters SQL.
-        rows = list(self._query(f"""
-            SELECT p.id, p.web_name, p.team, p.element_type, p.now_cost,
-                   p.status, p.news, p.chance_of_playing_next_round, p.ingested_at,
-                   t.short_name AS club, e.viability_score, e.form, e.form_percentile,
-                   e.next_5_fixtures_score, e.normalized_n5fs, e.points_per_gw,
-                   e.points_per_gw_percentile
-            FROM `{self.project}.{self.raw}.players` p
-            LEFT JOIN `{self.project}.{self.raw}.teams` t ON p.team = t.id
-            LEFT JOIN `{self.project}.{self.analytics}.mart_player_eval` e ON p.id = e.id
-        """))
-        table = self.client.get_table(f"{self.project}.{self.analytics}.mart_player_eval", timeout=15)
-        fixture_table = self.client.get_table(f"{self.project}.{self.raw}.fixtures", timeout=15)
-        fixtures = upcoming_by_team(self._query(f"""
-            WITH team_fixtures AS (
-                SELECT id, event, started, finished, kickoff_time,
-                       team_h AS team_id, team_a AS opponent_id, 'H' AS home_away,
-                       team_h_difficulty AS difficulty
-                FROM `{self.project}.{self.raw}.fixtures`
-                UNION ALL
-                SELECT id, event, started, finished, kickoff_time,
-                       team_a AS team_id, team_h AS opponent_id, 'A' AS home_away,
-                       team_a_difficulty AS difficulty
-                FROM `{self.project}.{self.raw}.fixtures`
-            )
-            SELECT f.*, t.name AS opponent, t.short_name AS opponent_short
-            FROM team_fixtures f
-            LEFT JOIN `{self.project}.{self.raw}.teams` t ON f.opponent_id = t.id
-        """))
-        gameweeks = tuple(dict(r) for r in self._query(
-            f"SELECT id, is_current, finished FROM `{self.project}.{self.raw}.gameweeks` ORDER BY id DESC"))
-        players = tuple(Player(
-            id=r.id, name=r.web_name, team_id=r.team, club=r.club or str(r.team),
-            position=r.element_type, price=r.now_cost, score=optional_number(r.viability_score),
-            form=optional_number(r.form), form_percentile=optional_number(r.form_percentile),
-            fixture_ease=optional_number(r.next_5_fixtures_score),
-            normalized_fixture_ease=optional_number(r.normalized_n5fs),
-            points_per_gw=optional_number(r.points_per_gw),
-            points_percentile=optional_number(r.points_per_gw_percentile),
-            status=r.status or "a", news=r.news or "", chance_of_playing=r.chance_of_playing_next_round,
-            upcoming_fixtures=fixtures.get(r.team, ()),
-        ) for r in rows)
-        if not players or len({p.id for p in players}) != len(players):
-            raise ValueError("Empty player catalog or duplicated player identifiers")
-        if not any(p.score is not None for p in players):
-            raise ValueError("No scored players")
-        catalog_time = max(r.ingested_at for r in rows)
-        version = dataset_version(table.modified, catalog_time, fixture_table.modified)
-        return Dataset(version=version, players=players, gameweeks=gameweeks,
-                       scores_updated_at=table.modified, catalog_updated_at=catalog_time,
-                       fixtures_updated_at=fixture_table.modified)
+        return self._load_published()
 
     def _load_published(self) -> Dataset:
         rows = [dict(r) for r in self._query(
             f"SELECT * FROM `{self.project}.{self.analytics}.mart_recommendation_snapshot`")]
         if not rows or len({r["id"] for r in rows}) != len(rows):
             raise ValueError("Empty or duplicated published catalog")
-        metadata = ("publication_id", "scores_updated_at", "catalog_updated_at", "fixtures_updated_at",
+        time_field = "projections_updated_at" if "projections_updated_at" in rows[0] else "scores_updated_at"
+        metadata = ("publication_id", time_field, "catalog_updated_at", "fixtures_updated_at",
                     "last_checked_at", "season")
         if any(any(row[k] != rows[0][k] for k in metadata) for row in rows):
             raise ValueError("Inconsistent publication metadata")
         players = tuple(Player.model_validate({k: v for k, v in r.items() if k in Player.model_fields}) for r in rows)
         first = rows[0]
-        return Dataset(version=first["publication_id"], players=players, published=True,
-                       scores_updated_at=first["scores_updated_at"], catalog_updated_at=first["catalog_updated_at"],
+        return Dataset(version="points-v2:"+first["publication_id"], players=players, published=True,
+                       projections_updated_at=first[time_field], catalog_updated_at=first["catalog_updated_at"],
                        fixtures_updated_at=first["fixtures_updated_at"], last_checked_at=first["last_checked_at"],
                        season=first["season"])
 

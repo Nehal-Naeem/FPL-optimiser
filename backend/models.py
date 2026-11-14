@@ -104,23 +104,11 @@ class Player(BaseModel):
     club: str
     position: int = Field(ge=1, le=4)
     price: int = Field(gt=0)
-    score: Optional[float] = Field(default=None, ge=0, le=1)
-    form: Optional[float] = None
-    form_percentile: Optional[float] = None
-    fixture_ease: Optional[float] = None
-    normalized_fixture_ease: Optional[float] = None
-    points_per_gw: Optional[float] = None
-    points_percentile: Optional[float] = None
     status: str = "a"
     news: str = ""
     chance_of_playing: Optional[int] = None
     upcoming_fixtures: tuple[UpcomingFixture, ...] = ()
-    scoring_fixtures: tuple[UpcomingFixture, ...] = ()
     recent: Optional[RecentForm] = None
-    form_contribution: Optional[float] = None
-    fixture_contribution: Optional[float] = None
-    points_contribution: Optional[float] = None
-    scoring_method: str = "viability-v1"
     projections: tuple[GameweekProjection, ...] = ()
 
 
@@ -130,7 +118,7 @@ class Dataset(BaseModel):
     version: str
     players: tuple[Player, ...]
     gameweeks: tuple[dict, ...] = Field(default=(), exclude=True)
-    scores_updated_at: datetime
+    projections_updated_at: datetime
     catalog_updated_at: datetime
     fixtures_updated_at: Optional[datetime] = None
     last_checked_at: Optional[datetime] = None
@@ -141,7 +129,8 @@ class Dataset(BaseModel):
         horizon = next((p.projections for p in self.players if p.projections), ())
         return {
             "dataset_version": self.version,
-            "scores_updated_at": self.scores_updated_at,
+            "contract_version": 2,
+            "projections_updated_at": self.projections_updated_at,
             "catalog_updated_at": self.catalog_updated_at,
             "fixtures_updated_at": self.fixtures_updated_at,
             "last_checked_at": self.last_checked_at,
@@ -150,7 +139,7 @@ class Dataset(BaseModel):
             "projection_gameweeks": [p.gameweek for p in horizon],
             "projection_method": horizon[0].projection_method if horizon else None,
             "projection_stale": bool(horizon and horizon[0].deadline_time <= datetime.now(timezone.utc)),
-            "stale": (datetime.now(timezone.utc) - (self.last_checked_at or self.scores_updated_at)).total_seconds() > 43200,
+            "stale": (datetime.now(timezone.utc) - (self.last_checked_at or self.projections_updated_at)).total_seconds() > 43200,
         }
 
 
@@ -160,14 +149,23 @@ class Pick(BaseModel):
     estimated: bool = True
 
 
+class MinutesOverride(BaseModel):
+    player_id: int = Field(gt=0)
+    gameweek: int = Field(ge=1, le=38)
+    minutes_per_fixture: int = Field(ge=0, le=90)
+
+
 class SquadRequest(BaseModel):
+    contract_version: Literal[2]
     squad: list[Pick] = Field(min_length=15, max_length=15)
     bank: int = Field(default=0, ge=0, le=10000)
     dataset_version: str
     source_gameweek: Optional[int] = Field(default=None, ge=1, le=38)
+    minutes_overrides: list[MinutesOverride] = Field(default_factory=list, max_length=200)
 
 
 class OptimizeRequest(BaseModel):
+    contract_version: Literal[2]
     mode: Literal["ideal", "transfers"]
     squad: list[Pick] = Field(default_factory=list, max_length=15)
     bank: int = Field(default=0, ge=0, le=10000)
@@ -175,17 +173,8 @@ class OptimizeRequest(BaseModel):
     max_transfers: int = Field(default=1, ge=0, le=15)
     dataset_version: str
     source_gameweek: Optional[int] = Field(default=None, ge=1, le=38)
-    objective: Literal["viability", "five_gw_points"] = "viability"
-    minutes_overrides: list["MinutesOverride"] = Field(default_factory=list, max_length=200)
-
-
-class MinutesOverride(BaseModel):
-    player_id: int = Field(gt=0)
-    gameweek: int = Field(ge=1, le=38)
-    minutes_per_fixture: int = Field(ge=0, le=90)
-
-
-OptimizeRequest.model_rebuild()
+    objective: Literal["five_gw_points"] = "five_gw_points"
+    minutes_overrides: list[MinutesOverride] = Field(default_factory=list, max_length=200)
 
 
 class DomainError(Exception):

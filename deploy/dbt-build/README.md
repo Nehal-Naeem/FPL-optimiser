@@ -5,25 +5,21 @@ now checks workflow lock ownership and exactly one complete ingestion manifest,
 including the run ID in every raw catalog table.
 
 It runs source freshness, then `dbt build --exclude resource_type:seed` against
-`fpl_build`. This includes all model/data/unit tests and the shadow comparison
-mart. Critical failures, skipped resources, missing required model results, and
+`fpl_build`. This includes all active model/data/unit tests. Critical failures, skipped resources, missing required model results, and
 nonzero dbt exit statuses block publication. Warnings are logged and permitted.
 Starter seeds stay excluded. dbt Core 1.10.15 and adapter 1.10.2 remain pinned.
 
-On success it archives evaluation, shadow, and serving candidate tables with the
-workflow UUID suffix, preserves the previous serving snapshot, publishes the
-compatibility `mart_player_eval`, then copies the serving snapshot atomically.
-All published/archived copies have expiration explicitly removed. Archives store
-forward observations, including season totals, recent features, fixture inputs,
-prices, availability and baseline scores; past corrected API rows alone cannot
-reconstruct the historical recommendation state.
+On success it archives `mart_player_fixture_projection`,
+`mart_player_gameweek_projection` and `mart_recommendation_snapshot` with the
+workflow UUID suffix, preserves `_previous`, then atomically copies the serving
+snapshot. Published/archive copies have expiration removed. No compatibility
+ranking mart is written. Historical retired warehouse objects are retained.
 
-The API serving boundary is **one table**, `mart_recommendation_snapshot`.
-Compatibility mart publication is separate and is not a pipeline-wide atomic
-transaction. The web backend in published mode never joins that mart to raw.
+The serving contract is version 2, with `projections_updated_at`. A missing
+contract marker forces migration rebuild even if input payloads are unchanged.
 
 Unchanged runs skip dbt and update the serving collection heartbeat. Actual
-scores and publication ID stay unchanged; stale status uses the successful check
+projections and publication ID stay unchanged; stale status uses the successful check
 time. `FPL_FORCE_BUILD=true` forces a build, useful after a deliberate rollback.
 A previous failed/unpublished run or failed-run history corrections force rebuild.
 

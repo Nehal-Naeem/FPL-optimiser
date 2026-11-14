@@ -50,6 +50,7 @@ def prepare_players(request, players):
         if key in overrides or override.player_id not in players or override.gameweek not in horizon:
             raise DomainError('Minutes assumptions must be unique and refer to a current player and planning gameweek.')
         overrides[key] = override.minutes_per_fixture
+    owned = {p.player_id for p in request.squad}
     adjusted = {}
     for p in players.values():
         if tuple(w.gameweek for w in p.projections) != horizon:
@@ -57,10 +58,12 @@ def prepare_players(request, players):
         weeks = []
         for week in p.projections:
             key = (p.id,week.gameweek)
-            if key not in overrides:
+            conservative = key not in overrides and p.id in owned and (p.status in UNAVAILABLE or p.chance_of_playing==0)
+            if key not in overrides and not conservative:
                 weeks.append(week)
                 continue
-            fixtures = tuple(assumed_fixture(f,p.position,overrides[key]) for f in week.fixtures)
+            minutes = overrides.get(key,0)
+            fixtures = tuple(assumed_fixture(f,p.position,minutes) for f in week.fixtures)
             weeks.append(week.model_copy(update={
                 **{name:sum(getattr(f,name) for f in fixtures) for name in COMPONENTS},
                 'expected_points':sum(f.expected_points for f in fixtures),
@@ -68,7 +71,7 @@ def prepare_players(request, players):
                 'play_probability':max((f.play_probability for f in fixtures),default=0),
                 'sixty_probability':max((f.sixty_probability for f in fixtures),default=0),
                 'fixtures':fixtures,'minutes_overridden':True,
-                'availability_note':f'User assumes {overrides[key]} minutes per assigned fixture',
+                'availability_note':('Conservative assumption: unavailable owned player, zero minutes; override to assume recovery' if conservative else f'User assumes {minutes} minutes per assigned fixture'),
             }))
         adjusted[p.id] = p.model_copy(update={'projections':tuple(weeks)})
     owned = {p.player_id for p in request.squad}
@@ -79,7 +82,7 @@ def prepare_players(request, players):
     for p in adjusted.values():
         explicit = all((p.id,w.gameweek) in overrides for w in p.projections if w.fixture_count)
         unavailable = p.status in UNAVAILABLE or p.chance_of_playing==0
-        if unavailable and not explicit:
+        if unavailable and not explicit and p.id not in owned:
             if p.id in owned:
                 # An immediate sale remains possible without asserting a recovery date.
                 continue
@@ -127,8 +130,8 @@ def automatic_replacements(xi, bench, missing, available=None):
     return {**mapping,**best[1]}
 
 
-def weekly_plan(squad,week_index,starters=None,captain=None):
-    points = {p.id:p.projections[week_index].expected_points for p in squad}
+def weekly_plan(squad,week_index,starters=None,captain=None, *, light=False):
+    points = {p.id:unit(p.projections[week_index].expected_points)/1000 for p in squad}
     if starters is None:
         options=[]
         for defenders in range(3,6):
@@ -147,6 +150,10 @@ def weekly_plan(squad,week_index,starters=None,captain=None):
     captain=captain or max(starters,key=lambda p:(points[p.id],p.projections[week_index].play_probability,-p.id))
     vice=max((p for p in starters if p.id!=captain.id),key=lambda p:(points[p.id],p.projections[week_index].play_probability,-p.id))
     starter_ids={p.id for p in starters}
+    if light:
+        return {'gameweek':squad[0].projections[week_index].gameweek,
+                'starting_xi':[p.id for p in starters],'captain':captain.id,
+                'projected_points':sum(points[p.id] for p in starters)+points[captain.id]}
     bench=[p for p in squad if p.id not in starter_ids]
     gk=next(p for p in bench if p.position==1)
     outfield=[p for p in bench if p.position!=1]
@@ -199,10 +206,6 @@ def optimize_points(request:OptimizeRequest,players:dict[int,Player],time_limit=
     model.add(spend<=available)
     if transfer:
         model.add(sum(x[p.id] for p in pool if p.id not in owned)<=request.max_transfers)
-        excluded_owned=owned.keys()-eligible.keys()
-        # Excluded unavailable players must be sold; count those sales within the same incoming-player cap.
-        if len(excluded_owned)>request.max_transfers:
-            raise DomainError('Unavailable owned players need minutes assumptions or enough immediate transfers. No recovery dates are inferred.')
     y,c={},{}
     primary=[]
     coverage=[]
@@ -232,11 +235,10 @@ def optimize_points(request:OptimizeRequest,players:dict[int,Player],time_limit=
                 coverage.append(unit(p.projections[g].play_probability)*backup)
             model.add(sum(cover)<=1)
     primary=sum(primary);coverage=sum(coverage)
-    viability=sum(unit(p.score or 0)*x[p.id] for p in pool)
     moves=sum(x[p.id] for p in pool if p.id not in owned) if transfer else 0
     tie=-moves*(available+1)-spend
     values=None; primary_status='UNKNOWN';tie_complete=False
-    for index,objective in enumerate((primary,coverage,viability,tie)):
+    for index,objective in enumerate((primary,coverage,tie)):
         remaining=time_limit-(monotonic()-started)
         if remaining<=0:break
         model.maximize(objective)
@@ -250,7 +252,7 @@ def optimize_points(request:OptimizeRequest,players:dict[int,Player],time_limit=
         model.add(objective==solver.value(objective))
         model.clear_hints()
         for v in variables:model.add_hint(v,values[v.index])
-        if index==3:tie_complete=True
+        if index==2:tie_complete=True
     if values is None:
         return {'status':primary_status,'players':[],'objective':'five_gw_points',
                 'message':'No legal projected squad found. Review budget, availability assumptions and transfer cap.',
@@ -278,14 +280,10 @@ def optimize_points(request:OptimizeRequest,players:dict[int,Player],time_limit=
     if any(p.projections[0].data_support!='observed_history' for p in result):warnings.append('Some selected players have limited underlying data; inspect their sample sizes.')
     if any(p.status!='a' for p in result):warnings.append('Availability flags remain. Later-week fitness is uncertain unless overridden.')
     if owned and not baseline_usable:warnings.append('Current-squad comparison unavailable: an owned player needs explicit availability assumptions.')
-    baseline_viability=sum(players[p].score or 0 for p in owned) if owned else None
-    result_viability=sum(p.score or 0 for p in result)
     return {'status':primary_status,'objective':'five_gw_points','players':result,'incoming':incoming,'outgoing':outgoing,
         'transfers':len(incoming) if transfer else None,'purchase_cost':purchases,'sale_proceeds':sales,
         'remaining_budget':request.bank+sales-purchases if transfer else request.budget-purchases,
-        'market_value':sum(p.price for p in result),'viability':result_viability,'baseline_viability':baseline_viability,
-        'viability_gain':result_viability-baseline_viability if baseline_viability is not None else None,
-        'fixed_unscored':[],'estimated_selling_prices':transfer and any(p.estimated for p in owned.values()),
+        'market_value':sum(p.price for p in result),'estimated_selling_prices':transfer and any(p.estimated for p in owned.values()),
         'elapsed_seconds':monotonic()-started,'weekly_plans':weeks,'baseline_weekly_plans':baseline_weeks,
         'projected_points':total,'baseline_projected_points':base_total,
         'projected_gain':total-base_total if base_total is not None else None,

@@ -26,8 +26,7 @@ test('import, edit selling price, find replacements, apply swap, and optimize', 
   await expect(page.getByText('OPTIMAL SQUAD FOUND')).toBeVisible();
   await expect(page.locator('.result-player')).toHaveCount(15);
   await expect(page.locator('.result-player-entry').first().locator('.fixture-badge')).toHaveCount(5);
-  await expect(page.locator('.transfer-summary')).toContainText('Premium Midfielder');
-  await expect(page.locator('.optimizer-output').getByText('Flagged', { exact: false })).toBeVisible();
+  await expect(page.locator('.transfer-summary')).toContainText('Budget Midfielder');
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth);
   expect(overflow).toBe(false);
 });
@@ -131,17 +130,12 @@ test('player popovers toggle with one click, keyboard, or touch without resizing
   const popup = page.getByRole('dialog', { name: 'Player 1 statistics', exact: true });
   await expect(popup).toHaveCount(0);
   await name.scrollIntoViewIfNeeded();
+  await page.evaluate(() => document.fonts.ready);
   const before = await card.boundingBox();
   if (isMobile) await name.tap(); else await name.click();
   await expect(popup).toBeVisible();
   await expect(popup).toHaveAttribute('data-pinned', 'true');
   expect(await card.boundingBox()).toEqual(before);
-  await expect(popup.locator('.percentile-values')).toContainText('Form percentile0.0%');
-  await expect(popup.locator('.percentile-values')).toContainText('Points-per-gameweek percentile87.7%');
-  await expect(popup).toContainText('Compared with scored players in the same position.');
-  await expect(popup.locator('.components')).not.toBeVisible();
-  await popup.getByText('Score breakdown', { exact: true }).click();
-  await expect(popup.locator('.components')).toBeVisible();
   expect(await card.boundingBox()).toEqual(before);
   if (isMobile) await name.tap(); else await name.click();
   await expect(popup).toHaveCount(0);
@@ -167,6 +161,9 @@ test('hover previews remain usable, pin on click, and stay dismissed until re-en
   await page.getByRole('button', { name: 'Import squad', exact: true }).click();
   const name = page.getByRole('button', { name: 'Player 1 statistics', exact: true });
   const popup = page.getByRole('dialog', { name: 'Player 1 statistics', exact: true });
+  await page.evaluate(() => document.fonts.ready);
+  await name.scrollIntoViewIfNeeded();
+  await page.mouse.move(0,0);
   await name.hover();
   await expect(popup).toBeVisible();
   await expect(popup).toHaveAttribute('data-pinned', 'false');
@@ -221,7 +218,7 @@ test('only one player popover opens and fixture and edit controls keep working',
   await page.getByRole('button', { name: 'Close editor' }).click();
 });
 
-test('replacement and optimizer popovers escape clipping and use the same percentiles', async ({ page }) => {
+test('replacement and optimizer popovers escape clipping and expose points components', async ({ page }) => {
   await page.goto('/');
   await page.getByLabel('FPL team ID').fill('123');
   await page.getByRole('button', { name: 'Import squad', exact: true }).click();
@@ -230,10 +227,10 @@ test('replacement and optimizer popovers escape clipping and use the same percen
   const row = page.locator('.replacement-row').filter({ has: page.getByRole('heading', { name: 'Player 3', exact: true }) });
   const candidate = row.locator('.candidate').first();
   await row.getByRole('button', { name: 'Player 3 statistics', exact: true }).click();
-  await expect(page.getByRole('dialog', { name: 'Player 3 statistics', exact: true })).toContainText('50.0%');
+  await expect(page.getByRole('dialog', { name: 'Player 3 statistics', exact: true })).toContainText('Experimental points');
   await candidate.getByRole('button', { name: 'Value Defender statistics', exact: true }).click();
   const popup = page.getByRole('dialog', { name: 'Value Defender statistics', exact: true });
-  await expect(popup.locator('.percentile-values dd')).toHaveText(['Unavailable', 'Unavailable']);
+  await expect(popup).toContainText('Experimental points');
   await expect(page.locator('.player-popover')).toHaveCount(1);
   expect(await popup.evaluate(element => element.parentElement === document.body)).toBe(true);
   await row.locator('.replacement-options').evaluate(element => {
@@ -249,8 +246,8 @@ test('replacement and optimizer popovers escape clipping and use the same percen
   await expect(page.getByText('OPTIMAL SQUAD FOUND')).toBeVisible();
   const result = page.locator('.result-player-entry').first();
   await result.locator('.player-name').click();
-  await expect(page.locator('.player-popover')).toContainText('Form percentile');
-  await expect(page.locator('.player-popover')).toContainText('Points-per-gameweek percentile');
+  await expect(page.locator('.player-popover')).toContainText('Experimental points');
+  await expect(page.locator('.player-popover')).toContainText('uncalibrated');
   await result.locator('.fixture-badge').first().click();
   await expect(page.locator('.player-popover')).toHaveCount(0);
   await expect(result.locator('.fixture-info')).toBeVisible();
@@ -320,7 +317,7 @@ test('recent history exposes measured statistics, missing metrics and incomplete
   await expect(popup).toContainText('Last 5 completed GWs');
   await expect(popup).toContainText('GW 6–10 · 5/5 covered');
   await expect(popup.locator('.recent-form .recent-values dd')).toHaveText(['14', '240', '3', '2.8', '48.0', '5.3', '0.15', 'Unavailable']);
-  await expect(popup).toContainText('not expected FPL points');
+  await expect(popup).toContainText('uncalibrated');
   await page.getByRole('button', { name: 'Player 2 statistics', exact: true }).click();
   await expect(page.getByRole('dialog', { name: 'Player 2 statistics', exact: true })).toContainText('No minutes recorded');
   await page.getByRole('button', { name: 'Player 3 statistics', exact: true }).click();
@@ -335,8 +332,8 @@ test('optimizer diagnostics explain allocation, club exposure and objective limi
   await page.getByRole('button', { name: 'Build ideal squad' }).click();
   await page.getByRole('button', { name: 'Optimize squad', exact: true }).click();
   const diagnostics = page.getByRole('region', { name: 'Squad diagnostics' });
-  await expect(diagnostics).toContainText('All 15 players contribute equally');
-  await expect(diagnostics).toContainText('captaincy are not modelled');
+  await expect(diagnostics).toContainText('Projected weekly XIs');
+  await expect(diagnostics).toContainText('captain bonuses');
   await expect(diagnostics.locator('.budget-allocation dd')).toHaveCount(4);
   await expect(diagnostics).toContainText('At least £5m remains');
   await expect(diagnostics).toContainText('Club selections:');
@@ -346,7 +343,6 @@ test('optimizer diagnostics explain allocation, club exposure and objective limi
 test('points mode plans weekly XIs, captaincy, cover and explicit minutes', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: 'Build ideal squad' }).click();
-  await page.getByLabel('Optimisation objective').selectOption('five_gw_points');
   await page.getByText('Playing-time assumptions', { exact: false }).click();
   await page.getByLabel('Player for minutes assumptions').selectOption('16');
   await page.getByLabel('Value Defender GW 11 minutes per fixture').fill('60');

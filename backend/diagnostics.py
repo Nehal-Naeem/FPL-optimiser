@@ -2,7 +2,7 @@
 from collections import Counter
 
 
-def squad_diagnostics(players, remaining_budget, objective="viability"):
+def squad_diagnostics(players, remaining_budget):
     allocation = [{"position": position, "players": sum(p.position == position for p in players),
                    "market_value": sum(p.price for p in players if p.position == position)}
                   for position in (1, 2, 3, 4)]
@@ -10,10 +10,7 @@ def squad_diagnostics(players, remaining_budget, objective="viability"):
     defence = Counter(p.team_id for p in players if p.position in (1, 2))
     warnings = []
     if remaining_budget >= 50:
-        warnings.append({"code": "unused_budget", "message": (
-            "At least £5m remains. Spending more does not necessarily improve the five-GW XI projection."
-            if objective=="five_gw_points" else
-            "At least £5m remains. The objective maximises viability and favours lower spending on ties.")})
+        warnings.append({"code":"unused_budget","message":"At least £5m remains. Spending more does not necessarily improve the five-GW XI projection."})
     for team, count in sorted(clubs.items()):
         club = next(p.club for p in players if p.team_id == team)
         if count == 3:
@@ -27,6 +24,4 @@ def squad_diagnostics(players, remaining_budget, objective="viability"):
     return {"budget_by_position": allocation, "club_counts": [
         {"team_id": team, "players": count} for team, count in sorted(clubs.items())],
         "low_minutes_player_ids": low, "warnings": warnings,
-        "methodology": ("Projected weekly XIs and captain bonuses drive selection. Bench cover is a separate stress test; viability is a tie-breaker."
-            if objective=="five_gw_points" else
-            "All 15 players contribute equally. Starting XI, bench utility and captaincy are not modelled; scores are not expected points. Percentiles are relative within position and are not calibrated across positions.")}
+        "methodology":"Projected weekly XIs and captain bonuses drive selection; formation-aware cover, fewer transfers and lower spending break ties."}

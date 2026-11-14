@@ -19,7 +19,7 @@ def client(dataset):
 
 
 def body(squad):
-    return {"dataset_version": "test-v1", "squad": [p.model_dump() for p in squad], "bank": 0}
+    return {"contract_version":2,"dataset_version": "test-v1", "squad": [p.model_dump() for p in squad], "bank": 0}
 
 
 def test_players_and_version_pinning(client, squad):
@@ -62,7 +62,7 @@ def test_import_before_first_deadline(client, monkeypatch):
 
 
 def test_stale_metadata(dataset):
-    old = dataset.model_copy(update={"scores_updated_at": datetime.now(timezone.utc) - timedelta(hours=13)})
+    old = dataset.model_copy(update={"projections_updated_at": datetime.now(timezone.utc) - timedelta(hours=13)})
     assert old.metadata()["stale"]
 
 

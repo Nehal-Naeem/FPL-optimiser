@@ -13,7 +13,7 @@ try:
 except ImportError:
     from pipeline import Pipeline
 
-MODELS = ("mart_player_eval", "mart_score_comparison", "mart_player_fixture_projection",
+MODELS = ("mart_player_fixture_projection",
           "mart_player_gameweek_projection", "mart_recommendation_snapshot")
 
 
@@ -30,7 +30,7 @@ def publish(pipeline, run=run_dbt):
     try:
         published_table = pipeline.client.get_table(snapshot)
         exists = True
-        projection_ready = "projections" in {field.name for field in published_table.schema}
+        projection_ready = {"projections","contract_version"}.issubset({field.name for field in published_table.schema})
     except NotFound:
         exists = False
         projection_ready = False
@@ -66,11 +66,9 @@ def publish(pipeline, run=run_dbt):
         source = f"{pipeline.project}.{pipeline.build}.{model}"
         archive = f"{pipeline.project}.{pipeline.analytics}.{model}_{suffix}"
         copy(pipeline, source, archive, "WRITE_EMPTY", retain=True)
-    # Save rollback copy before replacing the API table. Public mart is a separate compatibility output.
+    # Preserve the previous serving contract before atomic publication.
     if exists:
         copy(pipeline, snapshot, snapshot + "_previous", "WRITE_TRUNCATE", retain=True)
-    copy(pipeline, f"{pipeline.project}.{pipeline.build}.mart_player_eval",
-         f"{pipeline.project}.{pipeline.analytics}.mart_player_eval", "WRITE_TRUNCATE", retain=True)
     pipeline.assert_owner()
     copy(pipeline, f"{pipeline.project}.{pipeline.build}.mart_recommendation_snapshot",
          snapshot, "WRITE_TRUNCATE", retain=True)

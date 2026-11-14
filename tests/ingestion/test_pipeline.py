@@ -63,7 +63,8 @@ def publication_pipeline():
     pipeline = Mock(spec=Pipeline, project="test-project", raw="raw", build="build", analytics="analytics",
                     location="US", run_id="abc-123", client=Mock())
     pipeline.assert_owner = Mock()
-    pipeline.client.get_table.return_value.schema = [Mock(name="field")]
+    pipeline.client.get_table.return_value.schema = [Mock(name="field"),Mock(name="contract")]
+    pipeline.client.get_table.return_value.schema[1].name = "contract_version"
     pipeline.client.get_table.return_value.schema[0].name = "projections"
     pipeline.query.return_value = [{"expired":False}]
     pipeline.labels = {"fpl_run": "abc-123"}
@@ -97,8 +98,8 @@ def test_publication_archives_and_rollback_precede_serving_copy(tmp_path, monkey
     assert run.call_args_list[0].args[0] == ["source", "freshness"]
     destinations = [call.args[1] for call in pipeline.client.copy_table.call_args_list]
     assert destinations[-1] == "test-project.analytics.mart_recommendation_snapshot"
-    assert destinations[-3].endswith("_previous")
-    assert len(destinations) == 8
+    assert destinations[-2].endswith("_previous")
+    assert len(destinations) == 5
     pipeline.query.assert_called_once()
 
 

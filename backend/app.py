@@ -12,7 +12,7 @@ from .diagnostics import squad_diagnostics
 from .models import Dataset, DomainError, OptimizeRequest, SquadRequest
 
 logger = logging.getLogger(__name__)
-app = FastAPI(title="FPL Optimiser", version="1.0.0")
+app = FastAPI(title="FPL Optimiser", version="2.0.0")
 app.add_middleware(GZipMiddleware, minimum_size=1000, compresslevel=5)
 repository = BigQueryRepository()
 fpl = FPLClient()
@@ -25,6 +25,17 @@ def get_dataset():
 @app.exception_handler(DomainError)
 async def domain_error(_request: Request, error: DomainError):
     return JSONResponse(status_code=error.status_code, content={"detail": error.message})
+
+
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+
+
+@app.exception_handler(RequestValidationError)
+async def contract_error(request: Request,error: RequestValidationError):
+    if isinstance(error.body,dict) and (error.body.get('contract_version')!=2 or error.body.get('objective')=='viability'):
+        return JSONResponse(status_code=409,content={'detail':'The application has been updated. Reload the page to use points planning.'})
+    return await request_validation_exception_handler(request,error)
 
 
 def check_version(version: str, dataset: Dataset):
@@ -51,7 +62,7 @@ def team(team_id: int = ApiPath(gt=0, le=2147483647), dataset: Dataset = Depends
 def replacement_analysis(body: SquadRequest, dataset: Dataset = Depends(get_dataset)):
     check_version(body.dataset_version, dataset)
     return {**dataset.metadata(), "source_gameweek": body.source_gameweek,
-            "replacements": replacements(body.squad, {p.id: p for p in dataset.players})}
+            **replacements(body, {p.id: p for p in dataset.players})}
 
 
 @app.post("/api/optimize")
@@ -59,7 +70,7 @@ def optimization(body: OptimizeRequest, dataset: Dataset = Depends(get_dataset))
     check_version(body.dataset_version, dataset)
     result = optimize(body, {p.id: p for p in dataset.players})
     if result["players"]:
-        result["diagnostics"] = squad_diagnostics(result["players"], result["remaining_budget"], body.objective)
+        result["diagnostics"] = squad_diagnostics(result["players"], result["remaining_budget"])
     logger.info("Optimization mode=%s status=%s elapsed=%.3f", body.mode, result["status"], result["elapsed_seconds"])
     return {**dataset.metadata(), "source_gameweek": body.source_gameweek, **result}
 

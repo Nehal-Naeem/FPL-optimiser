@@ -1,9 +1,9 @@
 # FPL BigQuery models
 
-The production ranking remains `mart_player_eval`: season minutes >60, within-position
-`CUME_DIST` for API form and season points/completed-GW, and weighted next-five-match
-ease, with weights 0.30/0.45/0.25. New recent features join **after** percentile and
-score computation. They do not alter eligibility, ranks or the CP-SAT objective.
+The active graph produces fixture/gameweek points projections and a versioned,
+all-player serving snapshot. Retired ranking/comparison models are no longer built,
+tested, archived or published. Existing historical warehouse objects remain for
+rollback and are not queried by the application.
 
 ## History and grains
 
@@ -40,41 +40,32 @@ Versioned candidate archives support forward evaluation only after joining their
 `publication_id` to a successful `pipeline_runs.run_id` and its non-null
 `published_at`. Archives written before a failed publication must be excluded.
 Use that publication completion timestamp as the information-availability bound;
-`ingested_at` and `scores_updated_at` are collection/calculation times, not proof
+`ingested_at` and `projections_updated_at` are collection/calculation times, not proof
 that a recommendation was available to users. Evaluate outcomes after selection.
 
-## Serving and shadow comparisons
+## Serving contract 2
 
-`int_upcoming_team_fixtures` matches the backend display rule: exclude started or
-finished, dated first, kickoff then fixture ID, five per team. The legacy scoring
-selector remains unchanged. The serving snapshot exposes both fixture sets so a
-live/undated discrepancy is explained rather than silently changing rankings.
+`int_upcoming_team_fixtures` excludes started/finished fixtures and selects the next
+five per team, dated first. This display list is distinct from the five actionable
+GW deadlines used for points planning.
 
-`mart_score_comparison` includes baseline and separate heuristic experiments:
-recent points/GW percentile in place of API form, that score times a capped
-recent-minutes factor, and the baseline with aligned upcoming-fixture selection.
-These are not calibrated expected points, and none feeds the serving score.
-Compare within-position rank deltas/top-K overlap, low-minutes selections, squad
-spend and club exposure. The complete-history comparison cohort may differ from
-the full baseline cohort; report its coverage. Future observed points must be
-joined after the saved selection timestamp, with transfer/availability caveats.
-
-`mart_recommendation_snapshot` contains **all catalog players**, nullable scores,
-nested upcoming/scoring fixtures, recent features, season totals, component
-contributions, prices, availability and one run/publication ID. The separate job
-publishes it only after the entire candidate build and critical checks pass.
+`mart_recommendation_snapshot` contains all catalog players, nested projections and
+components, recent measurements, prices, availability, `contract_version=2`,
+`projections_updated_at` and one publication UUID. It has no legacy score fields.
+The publisher archives the two projection marts and the serving snapshot, preserves
+`_previous`, then atomically replaces the single serving boundary.
 
 ## Quality policy and local validation
 
 Errors block publication: required IDs, source/composite uniqueness, current
 references, raw-run coherence, required casts/ranges, scaffold grain, rolling
-reconciliation, mapping, eligibility, percentiles, score formula and serving
+reconciliation, mapping, projection components/probabilities and serving
 coverage. Negative FPL points and double-GW minutes above 90 are valid.
 
 Warnings allow publication: optional attacking data, historical players absent
 from today's catalog, season-history discrepancies during settling/corrections,
 old checks, incomplete recent context, and plausible statistical/price outliers.
-No-future-fixture scores may be null. Fewer than five remaining matches is valid.
+Fewer than five actionable GWs is valid; assigned blanks have zero projected points.
 Raw source freshness warns at 8 hours and errors at 24; history age uses successful
 checks rather than the time a canonical metric last changed.
 
@@ -112,11 +103,10 @@ This builds isolated candidates; it does not publish. Production builds and
 publication must use the workflow so they share its lock and stage claims.
 
 
-## Optional points projection layer
+## Points projection layer
 
-The serving snapshot now nests `mart_player_gameweek_projection` and its fixture
-components. `int_projection_horizon`, `int_player_projection_rates`, and
-`int_team_projection_strength` feed the separate `mart_player_fixture_projection`.
-The viability formula remains unchanged. Both projection marts are archived with
-each validated publication for prospective evaluation. See the versioned
+`int_projection_horizon`, `int_player_projection_rates` and
+`int_team_projection_strength` feed `mart_player_fixture_projection`, which is
+summed/scaffolded into `mart_player_gameweek_projection`. Both projection marts are
+archived for prospective evaluation. See the versioned
 [methodology and evaluation guide](../../docs/POINTS_PLANNER.md).

@@ -9,14 +9,13 @@ from backend.models import Dataset, DomainError, Pick, Player, RecentForm, Upcom
 def fixture_dataset():
     positions = [1] * 2 + [2] * 5 + [3] * 5 + [4] * 3
     players = [Player(id=i, name=f"Player {i}", team_id=(i - 1) // 3 + 1,
-                      club=f"C{(i - 1) // 3 + 1}", position=pos, price=50, score=0.5,
-                      form=3, form_percentile=0 if i == 1 else 0.5, fixture_ease=3, normalized_fixture_ease=0.5,
-                      points_per_gw=4, points_percentile=0.87654 if i == 1 else 0.5)
+                      club=f"C{(i - 1) // 3 + 1}", position=pos, price=50,
+)
                for i, pos in enumerate(positions, 1)]
     players.extend([
-        Player(id=16, name="Value Defender", team_id=6, club="C6", position=2, price=45, score=0.8),
-        Player(id=17, name="Premium Midfielder", team_id=7, club="C7", position=3, price=70, score=0.9, status="i", news="Test injury flag"),
-        Player(id=18, name="Budget Midfielder", team_id=8, club="C8", position=3, price=30, score=0.4),
+        Player(id=16, name="Value Defender", team_id=6, club="C6", position=2, price=45),
+        Player(id=17, name="Premium Midfielder", team_id=7, club="C7", position=3, price=70, status="i", news="Test injury flag"),
+        Player(id=18, name="Budget Midfielder", team_id=8, club="C8", position=3, price=30),
     ])
     fixtures = tuple(UpcomingFixture(id=i, opponent_id=i + 10, opponent=f"Opponent {i}",
                      opponent_short=f"O{i}", home_away="H" if i % 2 else "A", gameweek=13 + i // 2,
@@ -37,7 +36,7 @@ def fixture_dataset():
     for p in players:
         weeks = []
         for i in range(5):
-            xp = 3 + (p.id % 5) / 2 + (1 if i % 2 == p.id % 2 else 0)
+            xp = 8 if p.id==16 else 3 + (p.id % 5) / 2 + (1 if i % 2 == p.id % 2 else 0)
             fixture = FixtureProjection(fixture_id=100+i, opponent_id=20, opponent='Opponent', home_away='H',
                 expected_points=xp, expected_minutes=90, play_probability=1, sixty_probability=1,
                 appearance_points=2, goal_points=xp-2, xg_per_minute=0.005)
@@ -48,7 +47,7 @@ def fixture_dataset():
         projected.append(p.model_copy(update={'projections':tuple(weeks)}))
     players = projected
     return Dataset(version="browser-test-v1", players=tuple(players), gameweeks=(),
-                   scores_updated_at=datetime.now(timezone.utc), catalog_updated_at=datetime.now(timezone.utc),
+                   projections_updated_at=datetime.now(timezone.utc), catalog_updated_at=datetime.now(timezone.utc),
                    fixtures_updated_at=datetime.now(timezone.utc))
 
 

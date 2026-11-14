@@ -1,126 +1,119 @@
+"""Points-only squad rules and single-swap decision regression tests."""
 from collections import Counter
 from itertools import combinations
-
 import pytest
-
-from backend.engine import optimize, replacements, score_units, validate_squad
-from backend.models import DomainError, OptimizeRequest, Pick, Player, QUOTAS
-
-
-def extra(id=16, position=2, price=49, score=0.6, team_id=6, status="a"):
-    return Player(id=id, name=f"Alternative {id}", team_id=team_id, club=f"Club {team_id}",
-                  position=position, price=price, score=score, status=status)
+from backend.engine import optimize,replacements,validate_squad
+from backend.models import DomainError,OptimizeRequest,SquadRequest,MinutesOverride
+from backend.tests.test_points_engine import project
+from backend.points_engine import prepare_players,weekly_plan
+from backend.replacement_engine import coverage_counts
 
 
-def request(squad, **kwargs):
-    return OptimizeRequest(mode="transfers", squad=squad, dataset_version="test", **kwargs)
+def req(squad,**kw):return SquadRequest(contract_version=2,squad=squad,dataset_version='test',**kw)
+def added(players,price=45,points=(8,)*5,**kw):
+    return project(players[3].model_copy(update={'id':16,'team_id':7,'price':price,**kw}),points)
 
 
-def test_coupled_transfers_beat_independent_swaps(players, squad):
-    # No cheaper-and-better individual move exists; a downgrade funds a big upgrade.
-    players[16] = extra(price=30, score=0.4)
-    players[17] = extra(id=17, position=3, price=70, score=0.9, team_id=7)
-    assert not any(row["candidates"] for row in replacements(squad, players))
-    result = optimize(request(squad, max_transfers=2), players)
-    assert result["status"] == "OPTIMAL"
-    assert {p.id for p in result["incoming"]} == {16, 17}
-    assert result["remaining_budget"] == 0
-    assert result["viability_gain"] == pytest.approx(0.3)
+@pytest.mark.parametrize('kind',['duplicate','position','club','missing','sale'])
+def test_invalid_squad(players,squad,kind):
+    if kind=='duplicate':squad[0]=squad[1]
+    if kind=='position':players[1]=players[1].model_copy(update={'position':2})
+    if kind=='club':players[4]=players[4].model_copy(update={'team_id':1})
+    if kind=='missing':players.pop(1)
+    if kind=='sale':squad[0]=squad[0].model_copy(update={'selling_price':51})
+    with pytest.raises(DomainError):validate_squad(squad,players)
 
 
-@pytest.mark.parametrize("mode", ["ideal", "transfers"])
-def test_matches_exhaustive_search(players, squad, mode):
-    players.update({16: extra(price=30, score=0.4),
-                    17: extra(id=17, position=3, price=70, score=0.9, team_id=7),
-                    18: extra(id=18, position=4, price=48, score=0.6, team_id=8)})
-    req = OptimizeRequest(mode=mode, squad=squad, dataset_version="test", budget=750, max_transfers=2)
-    owned = {p.player_id for p in squad}
-    def objective(chosen):
-        new = len({p.id for p in chosen} - owned) if mode == "transfers" else 0
-        return sum(score_units(p) for p in chosen), -new, -sum(p.price for p in chosen)
-    valid = []
-    for chosen in combinations(players.values(), 15):
-        if Counter(p.position for p in chosen) != Counter(QUOTAS):
-            continue
-        if max(Counter(p.team_id for p in chosen).values()) > 3 or sum(p.price for p in chosen) > 750:
-            continue
-        if mode == "transfers" and len({p.id for p in chosen} - owned) > 2:
-            continue
-        valid.append(chosen)
-    result = optimize(req, players)
-    assert objective(result["players"]) == max(map(objective, valid))
+def test_points_upgrades_cheaper_and_bank_boundary(players,squad):
+    players[16]=added(players,price=55)
+    assert not next(r for r in replacements(req(squad,bank=4),players)['replacements'] if r['player_id']==3)['upgrades']
+    row=next(r for r in replacements(req(squad,bank=5),players)['replacements'] if r['player_id']==3)
+    c=row['upgrades'][0]
+    assert c['player'].id==16 and c['projected_gain']>0 and c['remaining_bank']==0 and c['bank_used']==5
+    players[16]=added(players)
+    assert next(r for r in replacements(req(squad),players)['replacements'] if r['player_id']==3)['upgrades'][0]['savings']==5
 
 
-def test_sale_price_and_exact_bank_boundary(players, squad):
-    squad[2] = Pick(player_id=3, selling_price=45)
-    players[16] = extra(price=50, score=0.9)
-    # Fix every other defender's score higher, so selling Player 3 is the only gain.
-    for i in range(4, 8):
-        players[i] = players[i].model_copy(update={"score": 1.0})
-    assert optimize(request(squad, bank=4), players)["transfers"] == 0
-    result = optimize(request(squad, bank=5), players)
-    assert result["transfers"] == 1
-    assert result["sale_proceeds"] == 45
-    assert result["remaining_budget"] == 0
+def test_budget_saving_reserve_has_no_lineup_or_coverage_loss(players,squad):
+    players[3]=project(players[3],(1,)*5)
+    players[16]=added(players,points=(0.5,)*5)
+    row=next(r for r in replacements(req(squad),players)['replacements'] if r['player_id']==3)
+    assert not row['upgrades']
+    c=row['savings_moves'][0]
+    assert c['projected_gain']==0 and c['savings']==5 and c['planned_starts']==0
+    assert all(w['projected_gain']>=0 and w['single_cover_change']>=0 and w['double_cover_change']>=0 for w in c['weekly_deltas'])
+    players[16]=project(players[16],(0.5,)*5,probability=0.2)
+    assert not next(r for r in replacements(req(squad),players)['replacements'] if r['player_id']==3)['savings_moves']
 
 
-def test_zero_transfers_and_tie_prefer_fewer_moves(players, squad):
-    players[16] = extra(score=0.5, price=30)
-    assert optimize(request(squad, max_transfers=15), players)["transfers"] == 0
-    players[16] = extra(score=1.0)
-    assert optimize(request(squad, max_transfers=0), players)["incoming"] == []
+def test_more_individual_points_can_have_no_lineup_gain(players,squad):
+    players[3]=project(players[3],(0.1,)*5)
+    players[16]=added(players,price=55,points=(0.2,)*5)
+    row=next(r for r in replacements(req(squad,bank=5),players)['replacements'] if r['player_id']==3)
+    assert not row['upgrades'] and not row['savings_moves']
 
 
-def test_full_squad_tie_prefers_money(players):
-    players[16] = extra(score=0.5, price=30)
-    result = optimize(OptimizeRequest(mode="ideal", budget=750, dataset_version="test"), players)
-    assert 16 in {p.id for p in result["players"]}
-    assert result["remaining_budget"] == 20
+def test_club_and_owned_candidates_excluded(players,squad):
+    players[16]=added(players,team_id=1)
+    row=next(r for r in replacements(req(squad),players)['replacements'] if r['player_id']==4)
+    assert not row['upgrades']
+    result=replacements(req(squad),players)
+    assert all(c['player'].id==16 for row in result['replacements'] for c in row['upgrades'])
 
 
-def test_infeasible_budget_and_timeout(players):
-    req = OptimizeRequest(mode="ideal", budget=1, dataset_version="test")
-    assert optimize(req, players)["status"] == "INFEASIBLE"
-    assert optimize(req, players, time_limit=0)["status"] == "UNKNOWN"
+def test_owned_injury_zero_default_partial_override_and_cache_isolation(players,squad):
+    players[3]=players[3].model_copy(update={'status':'i','chance_of_playing':0})
+    _,adjusted,eligible=prepare_players(req(squad),players)
+    assert 3 in eligible and all(w.expected_points==0 for w in adjusted[3].projections)
+    assert players[3].projections[0].expected_minutes==90
+    r=req(squad,minutes_overrides=[MinutesOverride(player_id=3,gameweek=11,minutes_per_fixture=60)])
+    _,adjusted,_=prepare_players(r,players)
+    assert adjusted[3].projections[0].expected_minutes==60 and adjusted[3].projections[1].expected_minutes==0
+    result=optimize(OptimizeRequest(contract_version=2,mode='transfers',squad=squad,max_transfers=0,dataset_version='test'),players)
+    assert result['transfers']==0 and result['baseline_projected_points'] is not None
 
 
-def test_replacements_strict_sale_price_club_and_owned_rules(players, squad):
-    players[16] = extra(price=49, score=0.6, status="i")
-    players[17] = extra(id=17, price=50, score=0.9)
-    players[18] = extra(id=18, price=40, score=0.5)
-    players[19] = extra(id=19, price=40, score=0.9, team_id=1)
-    players[4] = players[4].model_copy(update={"price": 40, "score": 0.9})
-    squad[3] = Pick(player_id=4, selling_price=40)
-    row = next(r for r in replacements(squad, players) if r["player_id"] == 5)
-    assert [c["player"].id for c in row["candidates"]] == [16]
-    # A player from the outgoing player's club is allowed if the final count stays 3.
-    row = next(r for r in replacements(squad, players) if r["player_id"] == 3)
-    assert {c["player"].id for c in row["candidates"]} == {16, 19}
-    squad[4] = Pick(player_id=5, selling_price=49)
-    assert not next(r for r in replacements(squad, players) if r["player_id"] == 5)["candidates"]
+def test_fast_cover_matches_full_stress_enumeration(players):
+    squad=list(players.values())
+    for seed in range(15):
+        varied=[project(p,tuple((p.id*seed+g)%9 for g in range(5)),probability=0.5 if p.id%4==seed%4 else 1) for p in squad]
+        for g in range(5):
+            plan=weekly_plan(varied,g)
+            assert coverage_counts(varied,g,plan)==(plan['covered_single_absences'],plan['covered_double_absences'])
 
 
-def test_unscored_retained_and_unavailable_allowed(players, squad):
-    players[3] = players[3].model_copy(update={"score": None})
-    players[16] = extra(score=0.99, status="i")
-    rows = replacements(squad, players)
-    assert rows[2]["unscored"] and not rows[2]["candidates"]
-    result = optimize(request(squad), players)
-    assert result["fixed_unscored"] == [3]
-    assert 16 in {p.id for p in result["incoming"]}
+def test_no_viability_fields_in_api_and_old_mode_reload(dataset):
+    from fastapi.testclient import TestClient
+    from backend.app import app,get_dataset
+    app.dependency_overrides[get_dataset]=lambda:dataset
+    try:
+        with TestClient(app) as client:
+            data=client.get('/api/players').json()
+            assert data['contract_version']==2 and 'score' not in data['players'][0]
+            r=client.post('/api/optimize',json={'dataset_version':dataset.version,'mode':'ideal','objective':'viability'})
+            assert r.status_code==409 and 'Reload' in r.json()['detail']
+    finally:app.dependency_overrides.clear()
 
 
-@pytest.mark.parametrize("problem", ["duplicate", "club", "position", "unknown", "sale_price"])
-def test_invalid_squads(players, squad, problem):
-    if problem == "duplicate":
-        squad[0] = squad[1]
-    elif problem == "club":
-        players[15] = players[15].model_copy(update={"team_id": 1})
-    elif problem == "position":
-        players[15] = players[15].model_copy(update={"position": 2})
-    elif problem == "unknown":
-        players.pop(15)
-    else:
-        squad[0] = Pick(player_id=1, selling_price=51)
-    with pytest.raises(DomainError):
-        validate_squad(squad, players)
+def test_lower_individual_total_can_improve_rotation(players,squad):
+    pool={i:project(p,(30,)*5) for i,p in players.items()}
+    for i in (4,5,6):pool[i]=project(pool[i],(25,)*5)
+    pool[7]=project(pool[7],(0,)*5)
+    pool[3]=project(pool[3],(20,0,20,0,0))
+    pool[16]=added(pool,points=(0,35,0,0,0))
+    row=next(r for r in replacements(req(squad),pool)['replacements'] if r['player_id']==3)
+    assert row['upgrades'][0]['projected_gain']>0
+    assert sum(w.expected_points for w in pool[16].projections)<sum(w.expected_points for w in pool[3].projections)
+
+
+def test_saving_cannot_hide_a_weekly_loss(players,squad):
+    players[3]=project(players[3],(10,0,0,0,0))
+    players[16]=added(players,points=(0,10,0,0,0))
+    row=next(r for r in replacements(req(squad),players)['replacements'] if r['player_id']==3)
+    assert not row['upgrades'] and not row['savings_moves']
+
+
+def test_top_five_output_is_deterministic_after_all_candidates_evaluated(players,squad):
+    for i in range(16,24):players[i]=added(players,id=i)
+    row=next(r for r in replacements(req(squad),players)['replacements'] if r['player_id']==3)
+    assert [c['player'].id for c in row['upgrades']]==list(range(16,21))
